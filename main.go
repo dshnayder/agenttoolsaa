@@ -68,10 +68,6 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 	return func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
-			if v.Info.IsGroup {
-				return
-			}
-
 			userMessage := v.Message.GetConversation()
 			if userMessage == "" {
 				userMessage = v.Message.GetExtendedTextMessage().GetText()
@@ -82,6 +78,24 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 
 			userPhoneStr := v.Info.Chat.ToNonAD().String()
 			log.Printf("Received message from %s: %s", userPhoneStr, userMessage)
+
+			if !v.Info.IsGroup {
+				if strings.ToLower(os.Getenv("ALLOW_DM")) != "true" {
+					log.Printf("Dropped DM from %s (ALLOW_DM is restricted)", userPhoneStr)
+					return
+				}
+			}
+
+			allowedChats := os.Getenv("ALLOWED_CHATS")
+			if allowedChats != "" && !strings.Contains(allowedChats, userPhoneStr) {
+				log.Printf("Dropped unauthorized message from %s (Not mapped in ALLOWED_CHATS)", userPhoneStr)
+				return
+			}
+
+			if v.Info.IsGroup {
+				senderJID := v.Info.Sender.ToNonAD().String()
+				userMessage = fmt.Sprintf("[%s via Group]: %s", senderJID, userMessage)
+			}
 
 			ctx := context.Background()
 
