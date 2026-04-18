@@ -13,11 +13,14 @@ import (
 
 var workspaceDir string
 
-func setupWorkspace() {
+func setupDirectories() {
 	cwd, _ := os.Getwd()
 	workspaceDir = filepath.Join(cwd, "workspace")
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
 		log.Fatalf("Failed to create workspace directory: %v", err)
+	}
+	if err := os.MkdirAll("memory", 0755); err != nil {
+		log.Fatalf("Failed to create memory directory: %v", err)
 	}
 }
 
@@ -102,7 +105,7 @@ func executeFunctionCall(fc *genai.FunctionCall, userPhone string) genai.Part {
 	case "saveUserIdentity":
 		if contentObj, ok := args["markdown_content"]; ok {
 			if mdStr, isStr := contentObj.(string); isStr {
-				userFile := fmt.Sprintf("USER_%s.md", userPhone)
+				userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhone))
 				_ = os.WriteFile(userFile, []byte(mdStr), 0644)
 				result = map[string]any{"status": "success", "file_saved": userFile}
 			} else {

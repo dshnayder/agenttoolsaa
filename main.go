@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"go.mau.fi/whatsmeow"
@@ -55,7 +56,7 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				Tools: getToolDeclarations(),
 			}
 
-			userFile := fmt.Sprintf("USER_%s.md", userPhoneStr)
+			userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
 			identityData, err := os.ReadFile(userFile)
 			if err == nil {
 				config.SystemInstruction = &genai.Content{
@@ -143,17 +144,17 @@ func main() {
 		log.Fatalf("Failed to initialize GenAI client: %v", err)
 	}
 
+	// Establish necessary system directories
+	setupDirectories()
+
 	// Internal local sqlite DB
-	if err := initDB("store.db"); err != nil {
+	if err := initDB(filepath.Join("memory", "store.db")); err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
 	defer db.Close()
 
-	// Establish workspace sandbox boundary
-	setupWorkspace()
-
 	// Connect to WhatsApp
-	client, err := setupWhatsApp(ctx, "store.db", eventHandler)
+	client, err := setupWhatsApp(ctx, filepath.Join("memory", "store.db"), eventHandler)
 	if err != nil {
 		log.Fatalf("WhatsApp setup failed: %v", err)
 	}
