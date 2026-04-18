@@ -50,28 +50,9 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				return
 			}
 
-			// 3. Prepare config with Tools and System Instruction
-			saveUserIdentityFunc := &genai.FunctionDeclaration{
-				Name:        "saveUserIdentity",
-				Description: "Call this function to save or update the User's identity in the local system when they introduce themselves, state their name, occupation, or interests. Provide the identity data fully formatted as a Markdown document. Ensure you update and include all previously known data.",
-				Parameters: &genai.Schema{
-					Type: "object",
-					Properties: map[string]*genai.Schema{
-						"markdown_content": {
-							Type:        "string",
-							Description: "A complete Markdown formatted string containing the user's name, occupation, interests, etc.",
-						},
-					},
-					Required: []string{"markdown_content"},
-				},
-			}
-
+			// 3. Prepare config with Modular Tools
 			config := &genai.GenerateContentConfig{
-				Tools: []*genai.Tool{
-					{
-						FunctionDeclarations: []*genai.FunctionDeclaration{saveUserIdentityFunc},
-					},
-				},
+				Tools: getToolDeclarations(),
 			}
 
 			userFile := fmt.Sprintf("USER_%s.md", userPhoneStr)
@@ -91,40 +72,39 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				return
 			}
 
-			// 5. Send the *new* message to that chat session
+			// 5. Query Gemini
 			resp, err := chatSession.SendMessage(ctx, genai.Part{Text: userMessage})
 			if err != nil {
 				log.Printf("Error generating content via Gemini: %v", err)
 				return
 			}
 
-			// Check for Function Calling
-			if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-				for _, part := range resp.Candidates[0].Content.Parts {
-					if part.FunctionCall != nil && part.FunctionCall.Name == "saveUserIdentity" {
-						if contentObj, ok := part.FunctionCall.Args["markdown_content"]; ok {
-							if mdStr, isStr := contentObj.(string); isStr {
-								// Silently save identity data
-								_ = os.WriteFile(userFile, []byte(mdStr), 0644)
-								log.Printf("Silently saved identity data to %s", userFile)
-							}
-						}
+			// 6. Check for Function Call interception (allows multiple passes natively)
+			for {
+				if len(resp.Candidates) > 0 {
+					hasToolCall := false
+					var funcResponses []genai.Part
 
-						// Send the function response back to Gemini so it resumes
-						fr := genai.Part{
-							FunctionResponse: &genai.FunctionResponse{
-								Name: "saveUserIdentity",
-								Response: map[string]any{"status": "success"},
-							},
-						}
-						resp2, err := chatSession.SendMessage(ctx, fr)
-						if err != nil {
-							log.Printf("Error sending function response: %v", err)
-						} else {
-							resp = resp2 // Replace resp with the final text output
+					for _, part := range resp.Candidates[0].Content.Parts {
+						if part.FunctionCall != nil {
+							hasToolCall = true
+							fr := executeFunctionCall(part.FunctionCall, userPhoneStr)
+							funcResponses = append(funcResponses, fr)
 						}
 					}
+
+					if hasToolCall {
+						resp, err = chatSession.SendMessage(ctx, funcResponses...)
+						if err != nil {
+							log.Printf("Error sending function responses chaining: %v", err)
+							break
+						}
+						// Loop continues to check if Gemini requests another tool!
+						continue
+					}
 				}
+				// Break out of loop if no function calls are found (Agent reached final conclusion)
+				break
 			}
 
 			responseText := "Sorry, I couldn't generate a response."
@@ -132,7 +112,7 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				responseText = resultText
 			}
 
-			// 6. Save the AI's response to the database
+			// 7. Save bot's response to the database
 			if err := saveChatMessage(ctx, userPhoneStr, "model", responseText); err != nil {
 				log.Printf("Failed to insert model message into history: %v", err)
 			}
@@ -163,11 +143,14 @@ func main() {
 		log.Fatalf("Failed to initialize GenAI client: %v", err)
 	}
 
-	// Initialize our local sqlite DB for chat history
+	// Internal local sqlite DB
 	if err := initDB("store.db"); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("Database initialization failed: %v", err)
 	}
-	defer db.Close() // db is gracefully closed when main exits
+	defer db.Close()
+
+	// Establish workspace sandbox boundary
+	setupWorkspace()
 
 	// Connect to WhatsApp
 	client, err := setupWhatsApp(ctx, "store.db", eventHandler)
