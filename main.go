@@ -73,7 +73,7 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 			}
 
 			// 4. Create stateful Chat session
-			chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3-flash-preview", config, history)
+			chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3.1-flash-lite-preview", config, history)
 			if err != nil {
 				log.Printf("Error creating chat session via Gemini: %v", err)
 				return
@@ -184,7 +184,7 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 					Parts: []*genai.Part{{Text: sysText}},
 				}
 
-				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3-flash-preview", config, history)
+				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3.1-flash-lite-preview", config, history)
 				if err != nil {
 					log.Printf("Background: Error creating chat session: %v", err)
 					continue
