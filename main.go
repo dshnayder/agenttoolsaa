@@ -28,21 +28,16 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 	return func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
-			// Ignore group messages
 			if v.Info.IsGroup {
 				return
 			}
-			// Avoid answering our own messages
-			// if v.Info.IsFromMe {
-			// 	return
-			// }
 
 			userMessage := v.Message.GetConversation()
 			if userMessage == "" {
 				userMessage = v.Message.GetExtendedTextMessage().GetText()
 			}
 			if userMessage == "" {
-				return // Not a text message
+				return
 			}
 
 			userPhoneStr := v.Info.Chat.User
@@ -79,11 +74,10 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				}
 				rows.Close()
 
-				// Reverse order back to chronological (ascending) because we queried DESC
+				// Reverse order back to chronological
 				var history []*genai.Content
 				for i := len(messages) - 1; i >= 0; i-- {
 					m := messages[i]
-					// Skip the current user message that we JUST inserted to avoid duplication in history payload
 					if i == 0 && m.role == "user" {
 						continue
 					}
@@ -101,32 +95,95 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 					})
 				}
 
-				// 3. Create a stateful Chat session with retrieved history
-				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3-flash-preview", nil, history)
+				// 3. Prepare config with Tools and System Instruction
+				saveUserIdentityFunc := &genai.FunctionDeclaration{
+					Name:        "saveUserIdentity",
+					Description: "Call this function to save or update the User's identity in the local system when they introduce themselves, state their name, occupation, or interests. Provide the identity data fully formatted as a Markdown document. Ensure you update and include all previously known data.",
+					Parameters: &genai.Schema{
+						Type: "object",
+						Properties: map[string]*genai.Schema{
+							"markdown_content": {
+								Type:        "string",
+								Description: "A complete Markdown formatted string containing the user's name, occupation, interests, etc.",
+							},
+						},
+						Required: []string{"markdown_content"},
+					},
+				}
+
+				config := &genai.GenerateContentConfig{
+					Tools: []*genai.Tool{
+						{
+							FunctionDeclarations: []*genai.FunctionDeclaration{saveUserIdentityFunc},
+						},
+					},
+				}
+
+				// Load USER_<phone>.md if it exists
+				userFile := fmt.Sprintf("USER_%s.md", userPhoneStr)
+				identityData, err := os.ReadFile(userFile)
+				if err == nil {
+					config.SystemInstruction = &genai.Content{
+						Parts: []*genai.Part{
+							{Text: "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile."},
+						},
+					}
+				}
+
+				// 4. Create a stateful Chat session
+				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3-flash-preview", config, history)
 				if err != nil {
 					log.Printf("Error creating chat session via Gemini: %v", err)
 					return
 				}
 
-				// 4. Send the *new* message to that chat session
+				// 5. Send the *new* message to that chat session
 				resp, err := chatSession.SendMessage(ctx, genai.Part{Text: userMessage})
 				if err != nil {
 					log.Printf("Error generating content via Gemini: %v", err)
 					return
 				}
 
+				// Check for Function Calling
+				if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+					for _, part := range resp.Candidates[0].Content.Parts {
+						if part.FunctionCall != nil && part.FunctionCall.Name == "saveUserIdentity" {
+							if contentObj, ok := part.FunctionCall.Args["markdown_content"]; ok {
+								if mdStr, isStr := contentObj.(string); isStr {
+									// Silently save identity data
+									_ = os.WriteFile(userFile, []byte(mdStr), 0644)
+									log.Printf("Silently saved identity data to %s", userFile)
+								}
+							}
+							
+							// Send the function response back to Gemini so it resumes
+							fr := genai.Part{
+								FunctionResponse: &genai.FunctionResponse{
+									Name: "saveUserIdentity",
+									Response: map[string]any{"status": "success"},
+								},
+							}
+							resp2, err := chatSession.SendMessage(ctx, fr)
+							if err != nil {
+								log.Printf("Error sending function response: %v", err)
+							} else {
+								resp = resp2 // Replace resp with the final text output
+							}
+						}
+					}
+				}
+
 				if resultText := resp.Text(); resultText != "" {
 					responseText = resultText
 				}
 
-				// 5. Save the AI's response to the database
+				// 6. Save the AI's response to the database
 				_, err = db.ExecContext(ctx, "INSERT INTO chat_history (phone_number, role, message) VALUES (?, ?, ?)", userPhoneStr, "model", responseText)
 				if err != nil {
 					log.Printf("Failed to insert model message into history: %v", err)
 				}
 
 			} else {
-				// Fallback when AI is disabled
 				responseText = "Response: " + userMessage
 			}
 
@@ -163,7 +220,6 @@ func main() {
 	}
 	defer db.Close()
 
-	// Create table and indexes for history
 	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS chat_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,7 +234,6 @@ func main() {
 		log.Fatalf("Failed to create chat_history table: %v", err)
 	}
 
-	// Initialize the whatsmeow db store (it uses the same store.db file securely)
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	container, err := sqlstore.New(ctx, "sqlite3", "file:store.db?_foreign_keys=on", dbLog)
 	if err != nil {
@@ -195,7 +250,6 @@ func main() {
 	client.AddEventHandler(eventHandler(client))
 
 	if client.Store.ID == nil {
-		// New device pairing
 		qrChan, _ := client.GetQRChannel(context.Background())
 		err = client.Connect()
 		if err != nil {
@@ -210,7 +264,6 @@ func main() {
 			}
 		}
 	} else {
-		// Existing session
 		err = client.Connect()
 		if err != nil {
 			panic(err)
