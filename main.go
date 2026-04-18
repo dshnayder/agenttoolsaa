@@ -113,8 +113,14 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 
 			sysText += getSkillIndex()
 
+			// Start WhatsApp "typing..." presence
+			_ = client.SendChatPresence(ctx, v.Info.Chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+
 			// 4. Query Unified AI Provider (which safely handles tool loops)
 			responseText, err := aiProvider.Chat(ctx, userPhoneStr, userMessage, history, sysText)
+			
+			// Stop "typing..." presence
+			_ = client.SendChatPresence(ctx, v.Info.Chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 			if err != nil {
 				log.Printf("Error generating content via AI Provider: %v", err)
 				exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
