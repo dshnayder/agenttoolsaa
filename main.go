@@ -7,10 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
@@ -34,7 +37,7 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				return
 			}
 
-			userPhoneStr := v.Info.Chat.User
+			userPhoneStr := v.Info.Chat.ToNonAD().String()
 			log.Printf("Received message from %s: %s", userPhoneStr, userMessage)
 
 			ctx := context.Background()
@@ -56,14 +59,17 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				Tools: getToolDeclarations(),
 			}
 
+			sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 			userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
 			identityData, err := os.ReadFile(userFile)
-			if err == nil {
-				config.SystemInstruction = &genai.Content{
-					Parts: []*genai.Part{
-						{Text: "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile."},
-					},
-				}
+			if err == nil && len(identityData) > 0 {
+				sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile."
+			}
+
+			config.SystemInstruction = &genai.Content{
+				Parts: []*genai.Part{
+					{Text: sysText},
+				},
 			}
 
 			// 4. Create stateful Chat session
@@ -100,11 +106,9 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 							log.Printf("Error sending function responses chaining: %v", err)
 							break
 						}
-						// Loop continues to check if Gemini requests another tool!
 						continue
 					}
 				}
-				// Break out of loop if no function calls are found (Agent reached final conclusion)
 				break
 			}
 
@@ -129,6 +133,110 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 			}
 		}
 	}
+}
+
+func startBackgroundTimer(client *whatsmeow.Client) {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for range ticker.C {
+			files, err := filepath.Glob(filepath.Join("memory", "CHECKIN_*.md"))
+			if err != nil {
+				continue
+			}
+
+			for _, file := range files {
+				content, err := os.ReadFile(file)
+				if err != nil || len(strings.TrimSpace(string(content))) == 0 {
+					continue
+				}
+
+				base := filepath.Base(file)
+				userPhoneStr := strings.TrimPrefix(base, "CHECKIN_")
+				userPhoneStr = strings.TrimSuffix(userPhoneStr, ".md")
+
+				ctx := context.Background()
+
+				history, err := getChatHistory(ctx, userPhoneStr)
+				if err != nil {
+					continue
+				}
+
+				config := &genai.GenerateContentConfig{
+					Tools: getToolDeclarations(),
+				}
+
+				sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
+				userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
+				identityData, err := os.ReadFile(userFile)
+				if err == nil && len(identityData) > 0 {
+					sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile.\n\n"
+				}
+
+				config.SystemInstruction = &genai.Content{
+					Parts: []*genai.Part{{Text: sysText}},
+				}
+
+				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3-flash-preview", config, history)
+				if err != nil {
+					log.Printf("Background: Error creating chat session: %v", err)
+					continue
+				}
+
+				prompt := fmt.Sprintf("[BACKGROUND SCHEDULED WAKEUP] Here is the content of your checkin list. Execute whatever is due for the current time. If nothing is due, DO NOT send a message to the user. If you run a task, remember to use updateCheckin to remove it or update it. If you need to notify the user, include it in your final text response.\n\nCHECKIN LIST:\n%s", string(content))
+
+				resp, err := chatSession.SendMessage(ctx, genai.Part{Text: prompt})
+				if err != nil {
+					log.Printf("Background: Error communicating with Gemini: %v", err)
+					continue
+				}
+
+				for {
+					if len(resp.Candidates) > 0 {
+						hasToolCall := false
+						var funcResponses []genai.Part
+
+						for _, part := range resp.Candidates[0].Content.Parts {
+							if part.FunctionCall != nil {
+								hasToolCall = true
+								fr := executeFunctionCall(part.FunctionCall, userPhoneStr)
+								funcResponses = append(funcResponses, fr)
+							}
+						}
+
+						if hasToolCall {
+							resp2, err := chatSession.SendMessage(ctx, funcResponses...)
+							if err != nil {
+								log.Printf("Background: Error sending function responses: %v", err)
+								break
+							}
+							resp = resp2
+							continue
+						}
+					}
+					break
+				}
+
+				resultText := resp.Text()
+				if strings.TrimSpace(resultText) != "" {
+					jid, err := types.ParseJID(userPhoneStr)
+					if err == nil {
+						msg := &waProto.Message{
+							Conversation: proto.String(resultText),
+						}
+						_, err = client.SendMessage(ctx, jid, msg)
+						if err == nil {
+							// Only insert the model's response into the history 
+							_ = saveChatMessage(ctx, userPhoneStr, "model", resultText)
+						} else {
+							log.Printf("Background: Error sending WhatsApp message: %v", err)
+						}
+					} else {
+						log.Printf("Background: Invalid JID %s: %v", userPhoneStr, err)
+					}
+				}
+			}
+		}
+	}()
 }
 
 func main() {
@@ -158,6 +266,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("WhatsApp setup failed: %v", err)
 	}
+
+	// Start Background Monitoring
+	startBackgroundTimer(client)
+	log.Println("Background timer successfully armed.")
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

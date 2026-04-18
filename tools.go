@@ -43,6 +43,20 @@ func getToolDeclarations() []*genai.Tool {
 					},
 				},
 				{
+					Name:        "updateCheckin",
+					Description: "Updates the autonomous background checkin list by fully rewriting the CHECKIN file. Use this to schedule future tasks, add reminders, or remove them when completed.",
+					Parameters: &genai.Schema{
+						Type: "object",
+						Properties: map[string]*genai.Schema{
+							"markdown_content": {
+								Type:        "string",
+								Description: "The exact complete content to overwrite the CHECKIN file. If clearing all tasks, pass an empty string.",
+							},
+						},
+						Required: []string{"markdown_content"},
+					},
+				},
+				{
 					Name:        "readFile",
 					Description: "Reads the content of a local file in the workspace directory.",
 					Parameters: &genai.Schema{
@@ -102,6 +116,19 @@ func executeFunctionCall(fc *genai.FunctionCall, userPhone string) genai.Part {
 	log.Printf("Executing tool: %s", name)
 
 	switch name {
+	case "updateCheckin":
+		if contentObj, ok := args["markdown_content"]; ok {
+			if mdStr, isStr := contentObj.(string); isStr {
+				checkinFile := filepath.Join("memory", fmt.Sprintf("CHECKIN_%s.md", userPhone))
+				_ = os.WriteFile(checkinFile, []byte(mdStr), 0644)
+				result = map[string]any{"status": "success", "file_saved": checkinFile}
+			} else {
+				result = map[string]any{"error": "invalid content type"}
+			}
+		} else {
+			result = map[string]any{"error": "missing markdown_content"}
+		}
+
 	case "saveUserIdentity":
 		if contentObj, ok := args["markdown_content"]; ok {
 			if mdStr, isStr := contentObj.(string); isStr {
