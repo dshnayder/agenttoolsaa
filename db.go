@@ -35,7 +35,7 @@ func saveChatMessage(ctx context.Context, phoneStr, role, message string) error 
 }
 
 func getChatHistory(ctx context.Context, phoneStr string) ([]ChatMessage, error) {
-	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history WHERE phone_number = ? ORDER BY timestamp DESC LIMIT 50", phoneStr)
+	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history WHERE phone_number = ? ORDER BY timestamp DESC", phoneStr)
 	if err != nil {
 		return nil, err
 	}
@@ -68,4 +68,64 @@ func getChatHistory(ctx context.Context, phoneStr string) ([]ChatMessage, error)
 		})
 	}
 	return history, nil
+}
+
+func getActivePhones(ctx context.Context) ([]string, error) {
+	rows, err := db.QueryContext(ctx, "SELECT DISTINCT phone_number FROM chat_history")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var phones []string
+	for rows.Next() {
+		var phone string
+		if err := rows.Scan(&phone); err == nil {
+			phones = append(phones, phone)
+		}
+	}
+	return phones, nil
+}
+
+func getMessagesToCompact(ctx context.Context, phoneStr string, keepCount int) (ids []int, msgs []ChatMessage, err error) {
+	var total int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history WHERE phone_number = ?", phoneStr).Scan(&total)
+	if err != nil || total <= keepCount {
+		return nil, nil, err
+	}
+
+	deleteCount := total - keepCount
+
+	rows, err := db.QueryContext(ctx, "SELECT id, role, message, timestamp FROM chat_history WHERE phone_number = ? ORDER BY timestamp ASC, id ASC LIMIT ?", phoneStr, deleteCount)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int
+		var role, message, ts string
+		if err := rows.Scan(&id, &role, &message, &ts); err == nil {
+			ids = append(ids, id)
+			msgs = append(msgs, ChatMessage{Role: role, Text: message})
+		}
+	}
+	return ids, msgs, nil
+}
+
+func deleteCompactedMessages(ctx context.Context, ids []int) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		_, err := tx.Exec("DELETE FROM chat_history WHERE id = ?", id)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

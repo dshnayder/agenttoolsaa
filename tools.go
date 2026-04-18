@@ -17,8 +17,8 @@ func setupDirectories() {
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
 		log.Fatalf("Failed to create workspace directory: %v", err)
 	}
-	if err := os.MkdirAll("memory", 0755); err != nil {
-		log.Fatalf("Failed to create memory directory: %v", err)
+	if err := os.MkdirAll("memory/skills", 0755); err != nil {
+		log.Fatalf("Failed to create skills directory: %v", err)
 	}
 }
 
@@ -51,6 +51,15 @@ func GetAvailableTools() []ToolDefinition {
 				"markdown_content": {Type: "string", Description: "The exact complete content to overwrite the CHECKIN file. If clearing all tasks, pass an empty string."},
 			},
 			Required: []string{"markdown_content"},
+		},
+		{
+			Name:        "writeSkill",
+			Description: "Call this function to save a learned skill, rule, or methodology discussed by the user into long-term memory so you can recall how to perform tasks in the future.",
+			Properties: map[string]ToolProperty{
+				"skill_name":       {Type: "string", Description: "A short, descriptive snake_case filename for the skill (e.g., format_json)."},
+				"markdown_content": {Type: "string", Description: "A detailed Markdown document capturing the tool usage, methodology, or logic the user taught you."},
+			},
+			Required: []string{"skill_name", "markdown_content"},
 		},
 		{
 			Name:        "readFile",
@@ -111,6 +120,22 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 			}
 		} else {
 			result = map[string]any{"error": "missing markdown_content"}
+		}
+
+	case "writeSkill":
+		if nameObj, okName := args["skill_name"]; okName {
+			if contentObj, okBody := args["markdown_content"]; okBody {
+				if skillStr, isStr1 := nameObj.(string); isStr1 {
+					if mdStr, isStr2 := contentObj.(string); isStr2 {
+						skillPath := filepath.Join("memory", "skills", fmt.Sprintf("%s.md", skillStr))
+						_ = os.WriteFile(skillPath, []byte(mdStr), 0644)
+						result = map[string]any{"status": "success", "file_saved": skillPath}
+					}
+				}
+			}
+		}
+		if result == nil {
+			result = map[string]any{"error": "missing or invalid properties for writeSkill"}
 		}
 
 	case "readFile":
