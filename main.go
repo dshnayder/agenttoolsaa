@@ -20,6 +20,50 @@ import (
 
 var aiProvider LLMProvider
 
+func getSkillIndex() string {
+	skillsDir := filepath.Join("memory", "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return ""
+	}
+
+	var index strings.Builder
+	index.WriteString("Available Learned Skills (Use the 'readSkill' tool to dynamically load their full logic if contextually relevant):\n")
+	hasSkills := false
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			skillName := entry.Name()
+			skillPath := filepath.Join(skillsDir, skillName, "SKILL.md")
+			data, err := os.ReadFile(skillPath)
+			if err == nil {
+				content := string(data)
+				desc := "No description provided."
+				lines := strings.Split(content, "\n")
+				inFrontmatter := false
+				for _, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if trimmed == "---" {
+						inFrontmatter = !inFrontmatter
+						continue
+					}
+					if inFrontmatter && strings.HasPrefix(trimmed, "description:") {
+						desc = strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
+						break
+					}
+				}
+				index.WriteString(fmt.Sprintf("- %s: %s\n", skillName, desc))
+				hasSkills = true
+			}
+		}
+	}
+
+	if !hasSkills {
+		return ""
+	}
+	return index.String() + "\n"
+}
+
 func eventHandler(client *whatsmeow.Client) func(interface{}) {
 	return func(evt interface{}) {
 		switch v := evt.(type) {
@@ -66,6 +110,8 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 			if err == nil && len(summaryData) > 0 {
 				sysText += "Here is the summarized history of your older conversations with the user:\n" + string(summaryData) + "\n\n"
 			}
+
+			sysText += getSkillIndex()
 
 			// 4. Query Unified AI Provider (which safely handles tool loops)
 			responseText, err := aiProvider.Chat(ctx, userPhoneStr, userMessage, history, sysText)
@@ -143,7 +189,9 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 					sysText += "Here is the summarized history of your older conversations with the user:\n" + string(summaryData) + "\n\n"
 				}
 
-				prompt := fmt.Sprintf("[BACKGROUND SCHEDULED WAKEUP] Here is the content of your checkin list. Execute whatever is due for the current time. If nothing is due, DO NOT send a message to the user. If you run a task, remember to use updateCheckin to remove it or update it. If you need to notify the user, include it in your final text response.\n\nCHECKIN LIST:\n%s", string(content))
+				sysText += getSkillIndex()
+
+				prompt := fmt.Sprintf("[BACKGROUND SCHEDULED WAKEUP] Here is the content of your checkin list. Execute whatever is due for the current time. If nothing is due, output EXACTLY the single word IGNORE and absolutely nothing else. If you run a task, remember to use updateCheckin to remove it. If you need to notify the user, include it in your final text response.\n\nCHECKIN LIST:\n%s", string(content))
 
 				resultText, err := aiProvider.Chat(ctx, userPhoneStr, prompt, history, sysText)
 				if err != nil {
@@ -151,15 +199,19 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 					continue
 				}
 
-				if strings.TrimSpace(resultText) != "" {
+				trimmedText := strings.TrimSpace(resultText)
+				lowerText := strings.ToLower(trimmedText)
+				if trimmedText != "" && trimmedText != "IGNORE" && !strings.Contains(lowerText, "no response generated") {
 					jid, err := types.ParseJID(userPhoneStr)
 					if err == nil {
 						msg := &waProto.Message{
-							Conversation: proto.String(resultText),
+							Conversation: proto.String(trimmedText),
 						}
 						_, err = client.SendMessage(ctx, jid, msg)
 						if err == nil {
-							_ = saveChatMessage(ctx, userPhoneStr, "model", resultText)
+							// Provide conversational anchors so the Model timeline strictly alternates and doesn't crash GenAI limits
+							_ = saveChatMessage(ctx, userPhoneStr, "user", "[SYSTEM WAKEUP ACTION] A background checkin evaluating tasks was executed natively out-of-band.")
+							_ = saveChatMessage(ctx, userPhoneStr, "model", trimmedText)
 						} else {
 							log.Printf("Background: Error sending WhatsApp message: %v", err)
 						}
@@ -176,7 +228,7 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 				for _, userPhoneStr := range activePhones {
 					var total int
 					_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history WHERE phone_number = ?", userPhoneStr).Scan(&total)
-					
+
 					if total >= 20 { // User requested threshold 20
 						// Keep the most recent 10 natively
 						ids, msgs, err := getMessagesToCompact(ctx, userPhoneStr, 10)
@@ -188,7 +240,7 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 						for _, m := range msgs {
 							textBlock.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(m.Role), m.Text))
 						}
-						
+
 						summaryFile := filepath.Join("memory", fmt.Sprintf("SUMMARY_%s.md", userPhoneStr))
 						existingSummary, err := os.ReadFile(summaryFile)
 						var oldSummaryText string
@@ -227,7 +279,7 @@ You have reached your temporal memory threshold! Review the following conversati
 func main() {
 	var err error
 
-	// Determine LLM provider 
+	// Determine LLM provider
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey != "" {
 		log.Println("Initializing Google Gemini API connection...")
@@ -241,7 +293,7 @@ func main() {
 			targetModel = "gemma:2b" // Safe lightweight default
 			log.Println("OLLAMA_MODEL environment variable missing, defaulting to " + targetModel)
 		}
-		
+
 		log.Printf("Initializing local Ollama connection targeting %s...", targetModel)
 		aiProvider, err = NewOllamaProvider(targetModel)
 		if err != nil {

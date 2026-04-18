@@ -56,10 +56,19 @@ func GetAvailableTools() []ToolDefinition {
 			Name:        "writeSkill",
 			Description: "Call this function to save a learned skill, rule, or methodology discussed by the user into long-term memory so you can recall how to perform tasks in the future.",
 			Properties: map[string]ToolProperty{
-				"skill_name":       {Type: "string", Description: "A short, descriptive snake_case filename for the skill (e.g., format_json)."},
+				"skill_name":       {Type: "string", Description: "A short, descriptive snake-case or kebab-case identifier for the skill (e.g., format-json)."},
+				"description":      {Type: "string", Description: "A crisp 1-2 sentence description explaining exactly when to trigger this skill."},
 				"markdown_content": {Type: "string", Description: "A detailed Markdown document capturing the tool usage, methodology, or logic the user taught you."},
 			},
-			Required: []string{"skill_name", "markdown_content"},
+			Required: []string{"skill_name", "description", "markdown_content"},
+		},
+		{
+			Name:        "readSkill",
+			Description: "Reads the complete SKILL.md file for a documented skill out of your long-term memory.",
+			Properties: map[string]ToolProperty{
+				"skill_name": {Type: "string", Description: "The exact name of the skill extracted from the system index."},
+			},
+			Required: []string{"skill_name"},
 		},
 		{
 			Name:        "readFile",
@@ -124,18 +133,44 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 
 	case "writeSkill":
 		if nameObj, okName := args["skill_name"]; okName {
-			if contentObj, okBody := args["markdown_content"]; okBody {
-				if skillStr, isStr1 := nameObj.(string); isStr1 {
-					if mdStr, isStr2 := contentObj.(string); isStr2 {
-						skillPath := filepath.Join("memory", "skills", fmt.Sprintf("%s.md", skillStr))
-						_ = os.WriteFile(skillPath, []byte(mdStr), 0644)
-						result = map[string]any{"status": "success", "file_saved": skillPath}
+			if descObj, okDesc := args["description"]; okDesc {
+				if contentObj, okBody := args["markdown_content"]; okBody {
+					if skillStr, isStr1 := nameObj.(string); isStr1 {
+						if descStr, isStr2 := descObj.(string); isStr2 {
+							if mdStr, isStr3 := contentObj.(string); isStr3 {
+								// Construct Anthropic native format
+								skillDir := filepath.Join("memory", "skills", skillStr)
+								_ = os.MkdirAll(skillDir, 0755)
+								skillPath := filepath.Join(skillDir, "SKILL.md")
+								
+								fullFileContent := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s", skillStr, descStr, mdStr)
+								
+								_ = os.WriteFile(skillPath, []byte(fullFileContent), 0644)
+								result = map[string]any{"status": "success", "file_saved": skillPath}
+							}
+						}
 					}
 				}
 			}
 		}
 		if result == nil {
 			result = map[string]any{"error": "missing or invalid properties for writeSkill"}
+		}
+
+	case "readSkill":
+		if nameObj, okName := args["skill_name"]; okName {
+			if skillStr, isStr := nameObj.(string); isStr {
+				skillPath := filepath.Join("memory", "skills", skillStr, "SKILL.md")
+				data, err := os.ReadFile(skillPath)
+				if err != nil {
+					result = map[string]any{"error": "skill not found or couldn't be read: " + err.Error()}
+				} else {
+					result = map[string]any{"content": string(data)}
+				}
+			}
+		}
+		if result == nil {
+			result = map[string]any{"error": "missing or invalid properties for readSkill"}
 		}
 
 	case "readFile":
