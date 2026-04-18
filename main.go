@@ -83,6 +83,14 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 			resp, err := chatSession.SendMessage(ctx, genai.Part{Text: userMessage})
 			if err != nil {
 				log.Printf("Error generating content via Gemini: %v", err)
+				exhaustedMsg := "AI brain is exhausted, please try a bit later"
+				msg := &waProto.Message{
+					Conversation: proto.String(exhaustedMsg),
+				}
+				_, sendErr := client.SendMessage(ctx, v.Info.Chat, msg)
+				if sendErr != nil {
+					log.Printf("Error sending exhaustion message to WhatsApp: %v", sendErr)
+				}
 				return
 			}
 
