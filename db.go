@@ -5,12 +5,10 @@ import (
 	"database/sql"
 
 	_ "github.com/mattn/go-sqlite3"
-	"google.golang.org/genai"
 )
 
 var db *sql.DB
 
-// initDB opens the SQLite database and creates the chat_history table.
 func initDB(filepath string) error {
 	var err error
 	db, err = sql.Open("sqlite3", filepath)
@@ -31,14 +29,12 @@ func initDB(filepath string) error {
 	return err
 }
 
-// saveChatMessage inserts a new message into the chat history.
 func saveChatMessage(ctx context.Context, phoneStr, role, message string) error {
 	_, err := db.ExecContext(ctx, "INSERT INTO chat_history (phone_number, role, message) VALUES (?, ?, ?)", phoneStr, role, message)
 	return err
 }
 
-// getChatHistory retrieves the last 50 messages for the exact phone number and returns them formatted for Gemini.
-func getChatHistory(ctx context.Context, phoneStr string) ([]*genai.Content, error) {
+func getChatHistory(ctx context.Context, phoneStr string) ([]ChatMessage, error) {
 	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history WHERE phone_number = ? ORDER BY timestamp DESC LIMIT 50", phoneStr)
 	if err != nil {
 		return nil, err
@@ -57,7 +53,7 @@ func getChatHistory(ctx context.Context, phoneStr string) ([]*genai.Content, err
 		}
 	}
 
-	var history []*genai.Content
+	var history []ChatMessage
 	// Reverse order back to chronological
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
@@ -66,16 +62,9 @@ func getChatHistory(ctx context.Context, phoneStr string) ([]*genai.Content, err
 			continue
 		}
 
-		roleStr := genai.RoleUser
-		if m.role == "model" {
-			roleStr = genai.RoleModel
-		}
-
-		history = append(history, &genai.Content{
-			Role: roleStr,
-			Parts: []*genai.Part{
-				{Text: m.message},
-			},
+		history = append(history, ChatMessage{
+			Role: m.role,
+			Text: m.message,
 		})
 	}
 	return history, nil

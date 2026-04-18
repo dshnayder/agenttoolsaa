@@ -15,11 +15,10 @@ import (
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
 
-var genaiClient *genai.Client
+var aiProvider LLMProvider
 
 func eventHandler(client *whatsmeow.Client) func(interface{}) {
 	return func(evt interface{}) {
@@ -47,18 +46,14 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				log.Printf("Failed to insert user message into history: %v", err)
 			}
 
-			// 2. Retrieve history for Gemini
+			// 2. Retrieve history for LLM
 			history, err := getChatHistory(ctx, userPhoneStr)
 			if err != nil {
 				log.Printf("Failed to retrieve chat history: %v", err)
 				return
 			}
 
-			// 3. Prepare config with Modular Tools
-			config := &genai.GenerateContentConfig{
-				Tools: getToolDeclarations(),
-			}
-
+			// 3. Dynamically set up unified contextual identity
 			sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 			userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
 			identityData, err := os.ReadFile(userFile)
@@ -66,24 +61,11 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile."
 			}
 
-			config.SystemInstruction = &genai.Content{
-				Parts: []*genai.Part{
-					{Text: sysText},
-				},
-			}
-
-			// 4. Create stateful Chat session
-			chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3.1-flash-lite-preview", config, history)
+			// 4. Query Unified AI Provider (which safely handles tool loops)
+			responseText, err := aiProvider.Chat(ctx, userPhoneStr, userMessage, history, sysText)
 			if err != nil {
-				log.Printf("Error creating chat session via Gemini: %v", err)
-				return
-			}
-
-			// 5. Query Gemini
-			resp, err := chatSession.SendMessage(ctx, genai.Part{Text: userMessage})
-			if err != nil {
-				log.Printf("Error generating content via Gemini: %v", err)
-				exhaustedMsg := "AI brain is exhausted, please try a bit later"
+				log.Printf("Error generating content via AI Provider: %v", err)
+				exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
 				msg := &waProto.Message{
 					Conversation: proto.String(exhaustedMsg),
 				}
@@ -94,38 +76,11 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 				return
 			}
 
-			// 6. Check for Function Call interception (allows multiple passes natively)
-			for {
-				if len(resp.Candidates) > 0 {
-					hasToolCall := false
-					var funcResponses []genai.Part
-
-					for _, part := range resp.Candidates[0].Content.Parts {
-						if part.FunctionCall != nil {
-							hasToolCall = true
-							fr := executeFunctionCall(part.FunctionCall, userPhoneStr)
-							funcResponses = append(funcResponses, fr)
-						}
-					}
-
-					if hasToolCall {
-						resp, err = chatSession.SendMessage(ctx, funcResponses...)
-						if err != nil {
-							log.Printf("Error sending function responses chaining: %v", err)
-							break
-						}
-						continue
-					}
-				}
-				break
+			if responseText == "" {
+				responseText = "Sorry, I couldn't generate a response."
 			}
 
-			responseText := "Sorry, I couldn't generate a response."
-			if resultText := resp.Text(); resultText != "" {
-				responseText = resultText
-			}
-
-			// 7. Save bot's response to the database
+			// 5. Save bot's response to the database
 			if err := saveChatMessage(ctx, userPhoneStr, "model", responseText); err != nil {
 				log.Printf("Failed to insert model message into history: %v", err)
 			}
@@ -169,10 +124,6 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 					continue
 				}
 
-				config := &genai.GenerateContentConfig{
-					Tools: getToolDeclarations(),
-				}
-
 				sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 				userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
 				identityData, err := os.ReadFile(userFile)
@@ -180,51 +131,14 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 					sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile.\n\n"
 				}
 
-				config.SystemInstruction = &genai.Content{
-					Parts: []*genai.Part{{Text: sysText}},
-				}
-
-				chatSession, err := genaiClient.Chats.Create(ctx, "gemini-3.1-flash-lite-preview", config, history)
-				if err != nil {
-					log.Printf("Background: Error creating chat session: %v", err)
-					continue
-				}
-
 				prompt := fmt.Sprintf("[BACKGROUND SCHEDULED WAKEUP] Here is the content of your checkin list. Execute whatever is due for the current time. If nothing is due, DO NOT send a message to the user. If you run a task, remember to use updateCheckin to remove it or update it. If you need to notify the user, include it in your final text response.\n\nCHECKIN LIST:\n%s", string(content))
 
-				resp, err := chatSession.SendMessage(ctx, genai.Part{Text: prompt})
+				resultText, err := aiProvider.Chat(ctx, userPhoneStr, prompt, history, sysText)
 				if err != nil {
-					log.Printf("Background: Error communicating with Gemini: %v", err)
+					log.Printf("Background: Error communicating with AI provider: %v", err)
 					continue
 				}
 
-				for {
-					if len(resp.Candidates) > 0 {
-						hasToolCall := false
-						var funcResponses []genai.Part
-
-						for _, part := range resp.Candidates[0].Content.Parts {
-							if part.FunctionCall != nil {
-								hasToolCall = true
-								fr := executeFunctionCall(part.FunctionCall, userPhoneStr)
-								funcResponses = append(funcResponses, fr)
-							}
-						}
-
-						if hasToolCall {
-							resp2, err := chatSession.SendMessage(ctx, funcResponses...)
-							if err != nil {
-								log.Printf("Background: Error sending function responses: %v", err)
-								break
-							}
-							resp = resp2
-							continue
-						}
-					}
-					break
-				}
-
-				resultText := resp.Text()
 				if strings.TrimSpace(resultText) != "" {
 					jid, err := types.ParseJID(userPhoneStr)
 					if err == nil {
@@ -233,7 +147,6 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 						}
 						_, err = client.SendMessage(ctx, jid, msg)
 						if err == nil {
-							// Only insert the model's response into the history 
 							_ = saveChatMessage(ctx, userPhoneStr, "model", resultText)
 						} else {
 							log.Printf("Background: Error sending WhatsApp message: %v", err)
@@ -248,16 +161,28 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 }
 
 func main() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		log.Fatal("GEMINI_API_KEY environment variable is not set")
-	}
-
-	ctx := context.Background()
 	var err error
-	genaiClient, err = genai.NewClient(ctx, nil)
-	if err != nil {
-		log.Fatalf("Failed to initialize GenAI client: %v", err)
+
+	// Determine LLM provider 
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey != "" {
+		log.Println("Initializing Google Gemini API connection...")
+		aiProvider, err = NewGeminiProvider()
+		if err != nil {
+			log.Fatalf("Failed to initialize Gemini provider: %v", err)
+		}
+	} else {
+		targetModel := os.Getenv("OLLAMA_MODEL")
+		if targetModel == "" {
+			targetModel = "gemma:2b" // Safe lightweight default
+			log.Println("OLLAMA_MODEL environment variable missing, defaulting to " + targetModel)
+		}
+		
+		log.Printf("Initializing local Ollama connection targeting %s...", targetModel)
+		aiProvider, err = NewOllamaProvider(targetModel)
+		if err != nil {
+			log.Fatalf("Failed to initialize Ollama API connection: %v", err)
+		}
 	}
 
 	// Establish necessary system directories
@@ -270,6 +195,7 @@ func main() {
 	defer db.Close()
 
 	// Connect to WhatsApp
+	ctx := context.Background()
 	client, err := setupWhatsApp(ctx, filepath.Join("memory", "store.db"), eventHandler)
 	if err != nil {
 		log.Fatalf("WhatsApp setup failed: %v", err)
