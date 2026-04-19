@@ -215,11 +215,31 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 				sysText += getSkillIndex()
 
 				prompt := fmt.Sprintf(`[BACKGROUND SCHEDULED WAKEUP]
-Here is the content of your checkin list. Each task in the list has a schedule time and a description of what to do.
-Execute whatever is due now based on the schedule time and current time (%s).
-If nothing is due, output EXACTLY the single word IGNORE and absolutely nothing else.
-If you run a one-off task, remember to use updateCheckin to remove it.
-When you completed a one-off task do not mention that the task is removed, user understands that one-off tasks run once.
+Here is the content of your checkin list in YAML format.
+Each task consist of:
+* 'time': Next run time in RFC3339 format, for example 2026-04-19T10:02:31-04:00
+* 'schedule': When to run this task based on user request, for example 'every minute' or 'at 5pm' or 'once'.
+	If user asked to run task once then 'schedule' should be 'once'.
+	For reccuring tasks 'schedule' should specify user request for recurrence.
+* 'description': Description of what to do to perform the task.
+Example:
+- time: 2026-04-19T10:02:31-04:00
+  schedule: once
+  description: "Remind me to start the application"
+- time: 2026-04-19T10:30:00-04:00
+  schedule: "every 1 hour"
+  description: "Check if application is healthy"
+
+The logic for processing background tasks is as follows:
+1. Iterate over list of tasks.
+2. Extract task schedule time and description.
+3. Compare task schedule time with current system time %s.
+4. If task schedule time is in the past (i.e. less than current system time) then execute the task.
+5. Otherwise skip the task.
+6. After iterating all tasks no tasks is due then output EXACTLY the single word IGNORE and absolutely nothing else.
+7. When you run a one-off task, remember to use updateCheckin to remove it.
+8. When you run reccurring task update calculate next run time and update its 'time' field.
+9. When you completed a one-off task do not mention that the task is removed, user understands that one-off tasks run once.
 
 CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 
