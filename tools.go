@@ -45,8 +45,12 @@ func GetAvailableTools() []ToolDefinition {
 			Required: []string{"markdown_content"},
 		},
 		{
-			Name:        "updateCheckin",
-			Description: "Updates the autonomous background checkin list by fully rewriting the CHECKIN file. Use this to schedule future tasks, add reminders, or remove them when completed.",
+			Name: "updateCheckin",
+			Description: `Updates the autonomous background checkin list by fully rewriting the CHECKIN file.
+			Use this to schedule future tasks, add reminders, or remove them when completed.
+			The checkin file should be a list of tasks to execute.
+			Each task should have a clear schedule time, either periodic (e.g. every 1 hour or every checkin) or absolute (e.g. at 2026-04-19T10:02:31-04:00 or 9:30).
+			The task should also have a clear description of what to do.`,
 			Properties: map[string]ToolProperty{
 				"markdown_content": {Type: "string", Description: "The exact complete content to overwrite the CHECKIN file. If clearing all tasks, pass an empty string."},
 			},

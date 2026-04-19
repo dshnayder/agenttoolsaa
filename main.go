@@ -214,7 +214,14 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 
 				sysText += getSkillIndex()
 
-				prompt := fmt.Sprintf("[BACKGROUND SCHEDULED WAKEUP] Here is the content of your checkin list. Execute whatever is due for the current time. If nothing is due, output EXACTLY the single word IGNORE and absolutely nothing else. If you run a task, remember to use updateCheckin to remove it. If you need to notify the user, include it in your final text response.\n\nCHECKIN LIST:\n%s", string(content))
+				prompt := fmt.Sprintf(`[BACKGROUND SCHEDULED WAKEUP]
+Here is the content of your checkin list. Each task in the list has a schedule time and a description of what to do.
+Execute whatever is due now based on the schedule time and current time (%s).
+If nothing is due, output EXACTLY the single word IGNORE and absolutely nothing else.
+If you run a one-off task, remember to use updateCheckin to remove it.
+When you completed a one-off task do not mention that the task is removed, user understands that one-off tasks run once.
+
+CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 
 				resultText, err := aiProvider.Chat(ctx, userPhoneStr, prompt, history, sysText)
 				if err != nil {
