@@ -67,5 +67,6 @@ ALLOW_DM="true" ALLOWED_CHATS="1234567890@s.whatsapp.net" go run .
 - `workspace/` - Security constraint lock box where explicit filesystem tools write out dynamically evaluated file configurations.
 
 ## Outstanding items
-[ ] Make checkin scheduler deterministic. Currently it runs most tasks immediately regardless of scheduled time
-[ ] Improve skill generation.
+
+* [ ] Make checkin scheduler deterministic. Currently it runs most tasks immediately regardless of scheduled time
+* [ ] Improve skill generation.
