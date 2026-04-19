@@ -142,9 +142,9 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 								skillDir := filepath.Join("memory", "skills", skillStr)
 								_ = os.MkdirAll(skillDir, 0755)
 								skillPath := filepath.Join(skillDir, "SKILL.md")
-								
+
 								fullFileContent := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s", skillStr, descStr, mdStr)
-								
+
 								_ = os.WriteFile(skillPath, []byte(fullFileContent), 0644)
 								result = map[string]any{"status": "success", "file_saved": skillPath}
 							}
@@ -223,6 +223,12 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 			if cmdStr, isStr := cmdObj.(string); isStr {
 				cmd := exec.Command("bash", "-c", cmdStr)
 				cmd.Dir = workspaceDir
+
+				// Still safely close pure stdin so background calls don't hang
+				stdin, err := cmd.StdinPipe()
+				if err == nil {
+					stdin.Close()
+				}
 
 				out, err := cmd.CombinedOutput()
 				if err != nil {
