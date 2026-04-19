@@ -132,7 +132,7 @@ func eventHandler(client *whatsmeow.Client) func(interface{}) {
 
 			// 4. Query Unified AI Provider (which safely handles tool loops)
 			responseText, err := aiProvider.Chat(ctx, userPhoneStr, userMessage, history, sysText)
-			
+
 			// Stop "typing..." presence
 			_ = client.SendChatPresence(ctx, v.Info.Chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 			if err != nil {
@@ -176,10 +176,12 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 		for range ticker.C {
 			files, err := filepath.Glob(filepath.Join("memory", "CHECKIN_*.md"))
 			if err != nil {
+				log.Printf("Background Timer Fired: 0 active CHECKIN files found.")
 				continue
 			}
 
 			for _, file := range files {
+				log.Printf("Background Timer Fired: evaluating %s CHECKIN tracking file...", file)
 				content, err := os.ReadFile(file)
 				if err != nil || len(strings.TrimSpace(string(content))) == 0 {
 					continue
@@ -193,6 +195,7 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 
 				history, err := getChatHistory(ctx, userPhoneStr)
 				if err != nil {
+					log.Printf("No chat history for %s: %v", userPhoneStr, err)
 					continue
 				}
 
