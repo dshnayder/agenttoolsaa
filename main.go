@@ -183,7 +183,7 @@ func startBackgroundTimer(client *whatsmeow.Client) {
 			for _, file := range files {
 				log.Printf("Background Timer Fired: evaluating %s CHECKIN tracking file...", file)
 				content, err := os.ReadFile(file)
-				if err != nil || len(strings.TrimSpace(string(content))) == 0 {
+				if err != nil || len(strings.TrimSpace(string(content))) == 0 || content[0] != '-' {
 					continue
 				}
 
