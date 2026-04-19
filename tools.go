@@ -102,7 +102,7 @@ func GetAvailableTools() []ToolDefinition {
 func ExecuteTool(name string, args map[string]any, userPhone string) map[string]any {
 	var result map[string]any
 
-	log.Printf("Executing tool: %s", name)
+	log.Printf("Executing tool: %s, Args: %+v", name, args)
 
 	switch name {
 	case "saveUserIdentity":
