@@ -2,113 +2,140 @@ package main
 
 import (
 	"context"
-	"database/sql"
-
-	_ "github.com/mattn/go-sqlite3"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
 )
 
-var db *sql.DB
+// We need a mutex to prevent concurrent writes to the file.
+var historyMutex sync.Mutex
+var historyFilePath string
 
-func initDB(filepath string) error {
-	var err error
-	db, err = sql.Open("sqlite3", filepath)
+func initDB(path string) error {
+	historyFilePath = path
+	// Ensure directory exists
+	dir := filepath.Dir(historyFilePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	
+	// Create file if it doesn't exist
+	if _, err := os.Stat(historyFilePath); os.IsNotExist(err) {
+		return os.WriteFile(historyFilePath, []byte("[]"), 0644)
+	}
+	return nil
+}
+
+func saveChatMessage(ctx context.Context, role, message string) error {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	data, err := os.ReadFile(historyFilePath)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(`
-	CREATE TABLE IF NOT EXISTS chat_history (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		role TEXT,
-		message TEXT,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_timestamp ON chat_history(timestamp DESC);
-	`)
-	return err
-}
+	var history []ChatMessage
+	if err := json.Unmarshal(data, &history); err != nil {
+		return err
+	}
 
-func saveChatMessage(ctx context.Context, role, message string) error {
-	_, err := db.ExecContext(ctx, "INSERT INTO chat_history (role, message) VALUES (?, ?)", role, message)
-	return err
+	history = append(history, ChatMessage{Role: role, Text: message})
+
+	newData, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(historyFilePath, newData, 0644)
 }
 
 func getChatHistory(ctx context.Context) ([]ChatMessage, error) {
-	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history ORDER BY timestamp DESC")
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	data, err := os.ReadFile(historyFilePath)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	type chatMsg struct {
-		role    string
-		message string
-	}
-	var messages []chatMsg
-	for rows.Next() {
-		var m chatMsg
-		if err := rows.Scan(&m.role, &m.message); err == nil {
-			messages = append(messages, m)
-		}
-	}
 
 	var history []ChatMessage
-	// Reverse order back to chronological
-	for i := len(messages) - 1; i >= 0; i-- {
-		m := messages[i]
-		if i == 0 && m.role == "user" {
-			// Skip the most recent user message that we JUST inserted to avoid duplication
-			continue
-		}
-
-		history = append(history, ChatMessage{
-			Role: m.role,
-			Text: m.message,
-		})
+	if err := json.Unmarshal(data, &history); err != nil {
+		return nil, err
 	}
+
 	return history, nil
 }
 
-
 func getMessagesToCompact(ctx context.Context, keepCount int) (ids []int, msgs []ChatMessage, err error) {
-	var total int
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history").Scan(&total)
-	if err != nil || total <= keepCount {
-		return nil, nil, err
-	}
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
 
-	deleteCount := total - keepCount
-
-	rows, err := db.QueryContext(ctx, "SELECT id, role, message, timestamp FROM chat_history ORDER BY timestamp ASC, id ASC LIMIT ?", deleteCount)
+	data, err := os.ReadFile(historyFilePath)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var id int
-		var role, message, ts string
-		if err := rows.Scan(&id, &role, &message, &ts); err == nil {
-			ids = append(ids, id)
-			msgs = append(msgs, ChatMessage{Role: role, Text: message})
-		}
+	var history []ChatMessage
+	if err := json.Unmarshal(data, &history); err != nil {
+		return nil, nil, err
 	}
+
+	if len(history) <= keepCount {
+		return nil, nil, nil
+	}
+
+	deleteCount := len(history) - keepCount
+	
+	ids = make([]int, deleteCount)
+	for i := 0; i < deleteCount; i++ {
+		ids[i] = i
+		msgs = append(msgs, history[i])
+	}
+
 	return ids, msgs, nil
 }
 
 func deleteCompactedMessages(ctx context.Context, ids []int) error {
-	tx, err := db.BeginTx(ctx, nil)
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	data, err := os.ReadFile(historyFilePath)
 	if err != nil {
 		return err
 	}
 
-	for _, id := range ids {
-		_, err := tx.Exec("DELETE FROM chat_history WHERE id = ?", id)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
+	var history []ChatMessage
+	if err := json.Unmarshal(data, &history); err != nil {
+		return err
 	}
 
-	return tx.Commit()
+	if len(ids) > 0 && len(ids) <= len(history) {
+		history = history[len(ids):]
+	}
+
+	newData, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(historyFilePath, newData, 0644)
+}
+
+func getChatHistoryCount() (int, error) {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	data, err := os.ReadFile(historyFilePath)
+	if err != nil {
+		return 0, err
+	}
+
+	var history []ChatMessage
+	if err := json.Unmarshal(data, &history); err != nil {
+		return 0, err
+	}
+
+	return len(history), nil
 }

@@ -226,8 +226,11 @@ CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 
 			// START COMPACTION LOOP
 			ctx := context.Background()
-			var total int
-			_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history").Scan(&total)
+			total, err := getChatHistoryCount()
+			if err != nil {
+				log.Printf("Background: Failed to get chat history count: %v", err)
+				continue
+			}
 
 			if total >= 20 {
 				ids, msgs, err := getMessagesToCompact(ctx, 10)
@@ -301,11 +304,10 @@ func main() {
 	// Establish necessary system directories
 	setupDirectories()
 
-	// Internal local sqlite DB
-	if err := initDB(filepath.Join("memory", "store.db")); err != nil {
-		log.Fatalf("Database initialization failed: %v", err)
+	// Initialize JSON history storage
+	if err := initDB(filepath.Join("memory", "HISTORY.json")); err != nil {
+		log.Fatalf("History initialization failed: %v", err)
 	}
-	defer db.Close()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

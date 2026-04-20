@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -15,12 +16,22 @@ func (m *MockLLMProvider) Chat(ctx context.Context, userMessage string, history 
 }
 
 func TestHandleGoogleChatEvent(t *testing.T) {
-	// Setup in-memory DB
-	err := initDB(":memory:")
+	// Setup temp file for history
+	tmpFile, err := os.CreateTemp("", "history_test_*.json")
 	if err != nil {
-		t.Fatalf("Failed to init in-memory DB: %v", err)
+		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer db.Close()
+	defer os.Remove(tmpFile.Name())
+	
+	if _, err := tmpFile.Write([]byte("[]")); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	err = initDB(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to init history file: %v", err)
+	}
 
 	// Setup mock AI
 	mockAI := &MockLLMProvider{Reply: "Hello from AI"}

@@ -12,7 +12,6 @@ Designed for deep-level system administrators, SREs, and homelab enthusiasts, th
 
 ## Prerequisites
 - Go 1.20+
-- `sqlite3` installed on host hardware
 
 ## Installation & Setup
 
