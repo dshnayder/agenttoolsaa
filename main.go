@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/adk/agent"
+	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
@@ -103,7 +103,7 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 	content := &genai.Content{
 		Parts: []*genai.Part{{Text: prompt}},
 	}
-	for ev, err := range adkRunner.Run(ctx, "single_user", "single_session", content, agent.RunConfig{}) {
+	for ev, err := range adkRunner.Run(ctx, "single_user", "single_session", content, adkagent.RunConfig{}) {
 		if err != nil {
 			log.Printf("Error from ADK runner: %v", err)
 			continue
@@ -208,7 +208,7 @@ CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 				content := &genai.Content{
 					Parts: []*genai.Part{{Text: prompt}},
 				}
-				for ev, err := range adkRunner.Run(ctx, "background_user", "background_session", content, agent.RunConfig{}) {
+				for ev, err := range adkRunner.Run(ctx, "background_user", "background_session", content, adkagent.RunConfig{}) {
 					if err != nil {
 						log.Printf("Background: Error from ADK runner: %v", err)
 						continue
@@ -269,7 +269,10 @@ You have reached your temporal memory threshold! Review the following conversati
 %s`, oldSummaryText, textBlock.String())
 
 				var responseText string
-				for ev, err := range adkRunner.Run(ctx, "compaction_session", prompt, nil, agent.RunConfig{}) {
+				content := &genai.Content{
+					Parts: []*genai.Part{{Text: prompt}},
+				}
+				for ev, err := range adkRunner.Run(ctx, "compaction_session", "compaction_user", content, adkagent.RunConfig{}) {
 					if err != nil {
 						log.Printf("Compaction: Error from ADK runner: %v", err)
 						continue
@@ -340,6 +343,30 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)
+	}
+
+	// Seed session with history from HISTORY.json
+	history, err := getChatHistory(ctx)
+	if err == nil && len(history) > 0 {
+		log.Printf("Seeding session with %d messages from history...", len(history))
+		var historyText strings.Builder
+		historyText.WriteString("Here is the history of our past conversation. Please use it as context for future interactions:\n\n")
+		for _, m := range history {
+			historyText.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(m.Role), m.Text))
+		}
+		
+		content := &genai.Content{
+			Parts: []*genai.Part{{Text: historyText.String()}},
+		}
+		
+		for ev, err := range adkRunner.Run(ctx, "single_user", "single_session", content, adkagent.RunConfig{}) {
+			if err != nil {
+				log.Printf("Error seeding session: %v", err)
+				break
+			}
+			_ = ev
+		}
+		log.Println("Session successfully seeded with history.")
 	}
 
 	startBackgroundTimer()
