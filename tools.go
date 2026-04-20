@@ -7,6 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/functiontool"
 )
 
 var workspaceDir string
@@ -22,246 +25,223 @@ func setupDirectories() {
 	}
 }
 
-type ToolProperty struct {
-	Type        string
-	Description string
+// 1. saveUserIdentity
+type SaveUserIdentityArgs struct {
+	MarkdownContent string `json:"markdown_content" jsonschema:"description:A complete Markdown formatted string containing the user's name, occupation, interests, etc."`
 }
 
-type ToolDefinition struct {
-	Name        string
-	Description string
-	Properties  map[string]ToolProperty
-	Required    []string
+type SaveUserIdentityResults struct {
+	Status    string `json:"status"`
+	FileSaved string `json:"file_saved"`
 }
 
-func GetAvailableTools() []ToolDefinition {
-	return []ToolDefinition{
-		{
-			Name:        "saveUserIdentity",
-			Description: "Call this function to save or update the User's identity in the local system when they introduce themselves, state their name, occupation, or interests. Provide the identity data fully formatted as a Markdown document. Ensure you update and include all previously known data.",
-			Properties: map[string]ToolProperty{
-				"markdown_content": {Type: "string", Description: "A complete Markdown formatted string containing the user's name, occupation, interests, etc."},
-			},
-			Required: []string{"markdown_content"},
-		},
-		{
-			Name: "updateCheckin",
-			Description: `Updates the autonomous background checkin list by fully rewriting the CHECKIN file.
-Use this to schedule future tasks, add reminders, or remove them when completed.
-The checkin file should be a YAML *list* of tasks to execute.
-Each task consist of:
-* 'time': Next run time in RFC3339 format, for example 2026-04-19T10:02:31-04:00
-* 'schedule': When to run this task based on user request, for example 'every minute' or 'at 5pm' or 'once'.
-	If user asked to run task once then 'schedule' should be 'once'.
-	For reccuring tasks 'schedule' should specify user request for recurrence.
-* 'description': Description of what to do to perform the task.
-Example:
-- time: 2026-04-19T10:02:31-04:00
-  schedule: once
-  description: "Remind me to start the application"
-- time: 2026-04-19T10:30:00-04:00
-  schedule: "every 1 hour"
-  description: "Check if application is healthy"
-`,
-			Properties: map[string]ToolProperty{
-				"markdown_content": {Type: "string", Description: "The exact complete content to overwrite the CHECKIN file. If clearing all tasks, pass an empty string."},
-			},
-			Required: []string{"markdown_content"},
-		},
-		{
-			Name:        "writeSkill",
-			Description: "Call this function to save a learned skill, rule, or methodology discussed by the user into long-term memory so you can recall how to perform tasks in the future.",
-			Properties: map[string]ToolProperty{
-				"skill_name":       {Type: "string", Description: "A short, descriptive snake-case or kebab-case identifier for the skill (e.g., format-json)."},
-				"description":      {Type: "string", Description: "A crisp 1-2 sentence description explaining exactly when to trigger this skill."},
-				"markdown_content": {Type: "string", Description: "A detailed Markdown document capturing the tool usage, methodology, or logic the user taught you."},
-			},
-			Required: []string{"skill_name", "description", "markdown_content"},
-		},
-		{
-			Name:        "readSkill",
-			Description: "Reads the complete SKILL.md file for a documented skill out of your long-term memory.",
-			Properties: map[string]ToolProperty{
-				"skill_name": {Type: "string", Description: "The exact name of the skill extracted from the system index."},
-			},
-			Required: []string{"skill_name"},
-		},
-		{
-			Name:        "readFile",
-			Description: "Reads the content of a local file in the workspace directory.",
-			Properties: map[string]ToolProperty{
-				"filename": {Type: "string", Description: "Relative path to the file inside the workspace."},
-			},
-			Required: []string{"filename"},
-		},
-		{
-			Name:        "writeFile",
-			Description: "Writes content to a local file in the workspace directory.",
-			Properties: map[string]ToolProperty{
-				"filename": {Type: "string", Description: "Relative path to the file inside the workspace."},
-				"content":  {Type: "string", Description: "The exact content to write to the file."},
-			},
-			Required: []string{"filename", "content"},
-		},
-		{
-			Name:        "runCommand",
-			Description: "Executes a shell command on the host securely using bash and returns the stdout and stderr output. Piping ('|') and grep are supported.",
-			Properties: map[string]ToolProperty{
-				"command": {Type: "string", Description: "The shell command to execute."},
-			},
-			Required: []string{"command"},
-		},
+func saveUserIdentityFunc(ctx tool.Context, args SaveUserIdentityArgs) (SaveUserIdentityResults, error) {
+	userFile := filepath.Join("memory", "USER.md")
+	err := os.WriteFile(userFile, []byte(args.MarkdownContent), 0644)
+	if err != nil {
+		return SaveUserIdentityResults{}, err
 	}
+	return SaveUserIdentityResults{Status: "success", FileSaved: userFile}, nil
 }
 
-// ExecuteTool routes an API-agnostic tool request cleanly.
-func ExecuteTool(name string, args map[string]any) map[string]any {
-	var result map[string]any
+// 2. updateCheckin
+type UpdateCheckinArgs struct {
+	MarkdownContent string `json:"markdown_content" jsonschema:"description:The exact complete content to overwrite the CHECKIN file. If clearing all tasks, pass an empty string."`
+}
 
-	log.Printf("Executing tool: %s, Args: %+v", name, args)
+type UpdateCheckinResults struct {
+	Status    string `json:"status"`
+	FileSaved string `json:"file_saved"`
+}
 
-	switch name {
-	case "saveUserIdentity":
-		if contentObj, ok := args["markdown_content"]; ok {
-			if mdStr, isStr := contentObj.(string); isStr {
-				userFile := filepath.Join("memory", "USER.md")
-				_ = os.WriteFile(userFile, []byte(mdStr), 0644)
-				result = map[string]any{"status": "success", "file_saved": userFile}
-			} else {
-				result = map[string]any{"error": "invalid content type"}
-			}
-		} else {
-			result = map[string]any{"error": "missing markdown_content"}
-		}
+func updateCheckinFunc(ctx tool.Context, args UpdateCheckinArgs) (UpdateCheckinResults, error) {
+	checkinFile := filepath.Join("memory", "CHECKIN.md")
+	err := os.WriteFile(checkinFile, []byte(args.MarkdownContent), 0644)
+	if err != nil {
+		return UpdateCheckinResults{}, err
+	}
+	return UpdateCheckinResults{Status: "success", FileSaved: checkinFile}, nil
+}
 
-	case "updateCheckin":
-		if contentObj, ok := args["markdown_content"]; ok {
-			if mdStr, isStr := contentObj.(string); isStr {
-				checkinFile := filepath.Join("memory", "CHECKIN.md")
-				_ = os.WriteFile(checkinFile, []byte(mdStr), 0644)
-				result = map[string]any{"status": "success", "file_saved": checkinFile}
-			} else {
-				result = map[string]any{"error": "invalid content type"}
-			}
-		} else {
-			result = map[string]any{"error": "missing markdown_content"}
-		}
+// 3. writeSkill
+type WriteSkillArgs struct {
+	SkillName       string `json:"skill_name" jsonschema:"description:A short, descriptive snake-case or kebab-case identifier for the skill."`
+	Description     string `json:"description" jsonschema:"description:A crisp 1-2 sentence description explaining exactly when to trigger this skill."`
+	MarkdownContent string `json:"markdown_content" jsonschema:"description:A detailed Markdown document capturing the tool usage, methodology, or logic."`
+}
 
-	case "writeSkill":
-		if nameObj, okName := args["skill_name"]; okName {
-			if descObj, okDesc := args["description"]; okDesc {
-				if contentObj, okBody := args["markdown_content"]; okBody {
-					if skillStr, isStr1 := nameObj.(string); isStr1 {
-						if descStr, isStr2 := descObj.(string); isStr2 {
-							if mdStr, isStr3 := contentObj.(string); isStr3 {
-								// Construct Anthropic native format
-								skillDir := filepath.Join("memory", "skills", skillStr)
-								_ = os.MkdirAll(skillDir, 0755)
-								skillPath := filepath.Join(skillDir, "SKILL.md")
+type WriteSkillResults struct {
+	Status    string `json:"status"`
+	FileSaved string `json:"file_saved"`
+}
 
-								fullFileContent := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s", skillStr, descStr, mdStr)
+func writeSkillFunc(ctx tool.Context, args WriteSkillArgs) (WriteSkillResults, error) {
+	skillDir := filepath.Join("memory", "skills", args.SkillName)
+	_ = os.MkdirAll(skillDir, 0755)
+	skillPath := filepath.Join(skillDir, "SKILL.md")
 
-								_ = os.WriteFile(skillPath, []byte(fullFileContent), 0644)
-								result = map[string]any{"status": "success", "file_saved": skillPath}
-							}
-						}
-					}
-				}
-			}
-		}
-		if result == nil {
-			result = map[string]any{"error": "missing or invalid properties for writeSkill"}
-		}
+	fullFileContent := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s", args.SkillName, args.Description, args.MarkdownContent)
 
-	case "readSkill":
-		if nameObj, okName := args["skill_name"]; okName {
-			if skillStr, isStr := nameObj.(string); isStr {
-				skillPath := filepath.Join("memory", "skills", skillStr, "SKILL.md")
-				data, err := os.ReadFile(skillPath)
-				if err != nil {
-					result = map[string]any{"error": "skill not found or couldn't be read: " + err.Error()}
-				} else {
-					result = map[string]any{"content": string(data)}
-				}
-			}
-		}
-		if result == nil {
-			result = map[string]any{"error": "missing or invalid properties for readSkill"}
-		}
+	err := os.WriteFile(skillPath, []byte(fullFileContent), 0644)
+	if err != nil {
+		return WriteSkillResults{}, err
+	}
+	return WriteSkillResults{Status: "success", FileSaved: skillPath}, nil
+}
 
-	case "readFile":
-		if fileObj, ok := args["filename"]; ok {
-			if fileStr, isStr := fileObj.(string); isStr {
-				path := filepath.Clean(filepath.Join(workspaceDir, fileStr))
-				if !strings.HasPrefix(path, workspaceDir) {
-					result = map[string]any{"error": "access denied: pathological path escaping the workspace"}
-				} else {
-					data, err := os.ReadFile(path)
-					if err != nil {
-						result = map[string]any{"error": err.Error()}
-					} else {
-						result = map[string]any{"content": string(data)}
-					}
-				}
-			} else {
-				result = map[string]any{"error": "invalid filename type"}
-			}
-		} else {
-			result = map[string]any{"error": "missing filename"}
-		}
+// 4. readSkill
+type ReadSkillArgs struct {
+	SkillName string `json:"skill_name" jsonschema:"description:The exact name of the skill extracted from the system index."`
+}
 
-	case "writeFile":
-		if fileObj, ok := args["filename"]; ok {
-			if contentObj, hasContent := args["content"]; hasContent {
-				fileStr, _ := fileObj.(string)
-				contentStr, _ := contentObj.(string)
-				path := filepath.Clean(filepath.Join(workspaceDir, fileStr))
-				if !strings.HasPrefix(path, workspaceDir) {
-					result = map[string]any{"error": "access denied: pathological path escaping the workspace"}
-				} else {
-					_ = os.MkdirAll(filepath.Dir(path), 0755)
-					err := os.WriteFile(path, []byte(contentStr), 0644)
-					if err != nil {
-						result = map[string]any{"error": err.Error()}
-					} else {
-						result = map[string]any{"status": "file written successfully"}
-					}
-				}
-			} else {
-				result = map[string]any{"error": "missing content"}
-			}
-		} else {
-			result = map[string]any{"error": "missing filename"}
-		}
+type ReadSkillResults struct {
+	Content string `json:"content"`
+}
 
-	case "runCommand":
-		if cmdObj, ok := args["command"]; ok {
-			if cmdStr, isStr := cmdObj.(string); isStr {
-				cmd := exec.Command("bash", "-c", cmdStr)
-				cmd.Dir = workspaceDir
+func readSkillFunc(ctx tool.Context, args ReadSkillArgs) (ReadSkillResults, error) {
+	skillPath := filepath.Join("memory", "skills", args.SkillName, "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		return ReadSkillResults{}, fmt.Errorf("skill not found or couldn't be read: %w", err)
+	}
+	return ReadSkillResults{Content: string(data)}, nil
+}
 
-				// Still safely close pure stdin so background calls don't hang
-				stdin, err := cmd.StdinPipe()
-				if err == nil {
-					stdin.Close()
-				}
+// 5. readFile
+type ReadFileArgs struct {
+	Filename string `json:"filename" jsonschema:"description:Relative path to the file inside the workspace."`
+}
 
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					result = map[string]any{"error": err.Error(), "output": string(out)}
-				} else {
-					result = map[string]any{"output": string(out)}
-				}
-			} else {
-				result = map[string]any{"error": "invalid command type"}
-			}
-		} else {
-			result = map[string]any{"error": "missing command"}
-		}
+type ReadFileResults struct {
+	Content string `json:"content"`
+}
 
-	default:
-		result = map[string]any{"error": "unknown function executed"}
+func readFileFunc(ctx tool.Context, args ReadFileArgs) (ReadFileResults, error) {
+	path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
+	if !strings.HasPrefix(path, workspaceDir) {
+		return ReadFileResults{}, fmt.Errorf("access denied: pathological path escaping the workspace")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ReadFileResults{}, err
+	}
+	return ReadFileResults{Content: string(data)}, nil
+}
+
+// 6. writeFile
+type WriteFileArgs struct {
+	Filename string `json:"filename" jsonschema:"description:Relative path to the file inside the workspace."`
+	Content  string `json:"content" jsonschema:"description:The exact content to write to the file."`
+}
+
+type WriteFileResults struct {
+	Status string `json:"status"`
+}
+
+func writeFileFunc(ctx tool.Context, args WriteFileArgs) (WriteFileResults, error) {
+	path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
+	if !strings.HasPrefix(path, workspaceDir) {
+		return WriteFileResults{}, fmt.Errorf("access denied: pathological path escaping the workspace")
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	err := os.WriteFile(path, []byte(args.Content), 0644)
+	if err != nil {
+		return WriteFileResults{}, err
+	}
+	return WriteFileResults{Status: "file written successfully"}, nil
+}
+
+// 7. runCommand
+type RunCommandArgs struct {
+	Command string `json:"command" jsonschema:"description:The shell command to execute."`
+}
+
+type RunCommandResults struct {
+	Output string `json:"output"`
+	Error  string `json:"error,omitempty"`
+}
+
+func runCommandFunc(ctx tool.Context, args RunCommandArgs) (RunCommandResults, error) {
+	cmd := exec.Command("bash", "-c", args.Command)
+	cmd.Dir = workspaceDir
+
+	stdin, err := cmd.StdinPipe()
+	if err == nil {
+		stdin.Close()
 	}
 
-	return result
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return RunCommandResults{Output: string(out), Error: err.Error()}, nil
+	}
+	return RunCommandResults{Output: string(out)}, nil
+}
+
+// Helper to get all tools as ADK objects
+func GetAllTools() ([]tool.Tool, error) {
+	saveUserIdentityTool, err := functiontool.New(functiontool.Config{
+		Name:        "saveUserIdentity",
+		Description: "Save or update the User's identity in the local system.",
+	}, saveUserIdentityFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	updateCheckinTool, err := functiontool.New(functiontool.Config{
+		Name:        "updateCheckin",
+		Description: "Updates the autonomous background checkin list by fully rewriting the CHECKIN file.",
+	}, updateCheckinFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	writeSkillTool, err := functiontool.New(functiontool.Config{
+		Name:        "writeSkill",
+		Description: "Save a learned skill, rule, or methodology discussed by the user.",
+	}, writeSkillFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	readSkillTool, err := functiontool.New(functiontool.Config{
+		Name:        "readSkill",
+		Description: "Reads the complete SKILL.md file for a documented skill.",
+	}, readSkillFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	readFileTool, err := functiontool.New(functiontool.Config{
+		Name:        "readFile",
+		Description: "Reads the content of a local file in the workspace directory.",
+	}, readFileFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	writeFileTool, err := functiontool.New(functiontool.Config{
+		Name:        "writeFile",
+		Description: "Writes content to a local file in the workspace directory.",
+	}, writeFileFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	runCommandTool, err := functiontool.New(functiontool.Config{
+		Name:        "runCommand",
+		Description: "Executes a shell command on the host securely using bash.",
+	}, runCommandFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	return []tool.Tool{
+		saveUserIdentityTool,
+		updateCheckinTool,
+		writeSkillTool,
+		readSkillTool,
+		readFileTool,
+		writeFileTool,
+		runCommandTool,
+	}, nil
 }

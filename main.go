@@ -11,11 +11,12 @@ import (
 	"syscall"
 	"time"
 
-
-
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
 )
 
-var aiProvider LLMProvider
+var adkRunner *runner.Runner
 
 func getSkillIndex() string {
 	skillsDir := filepath.Join("memory", "skills")
@@ -80,12 +81,6 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 		log.Printf("Failed to insert user message into history: %v", err)
 	}
 
-	history, err := getChatHistory(ctx)
-	if err != nil {
-		log.Printf("Failed to retrieve chat history: %v", err)
-		return
-	}
-
 	sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 	
 	userFile := filepath.Join("memory", "USER.md")
@@ -102,16 +97,20 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 
 	sysText += getSkillIndex()
 
-	responseText, err := aiProvider.Chat(ctx, userMessage, history, sysText)
-	if err != nil {
-		log.Printf("Error generating content via AI Provider: %v", err)
-		exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
-		err = sendGoogleChatMessage(ctx, event.Space.Name, exhaustedMsg, event.Message.Thread.Name)
+	prompt := fmt.Sprintf("%s\n\nUser Message: %s", sysText, userMessage)
+	var responseText string
+	for ev, err := range adkRunner.Run(ctx, "single_session", prompt, nil, agent.RunConfig{}) {
 		if err != nil {
-			log.Printf("Error sending exhaustion message to Google Chat: %v", err)
+			log.Printf("Error from ADK runner: %v", err)
+			continue
 		}
-		return
+		if ev.LLMResponse.Content != nil {
+			for _, part := range ev.LLMResponse.Content.Parts {
+				responseText += part.Text
+			}
+		}
 	}
+
 
 	if responseText == "" {
 		responseText = "Sorry, I couldn't generate a response."
@@ -140,11 +139,7 @@ func startBackgroundTimer() {
 
 				ctx := context.Background()
 
-				history, err := getChatHistory(ctx)
-				if err != nil {
-					log.Printf("No chat history: %v", err)
-					continue
-				}
+
 
 				sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 				
@@ -205,11 +200,19 @@ CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 					continue
 				}
 
-				responseText, err := aiProvider.Chat(ctx, prompt, history, sysText)
-				if err != nil {
-					log.Printf("Background: Error communicating with AI provider: %v", err)
-					continue
+				var responseText string
+				for ev, err := range adkRunner.Run(ctx, "background_session", prompt, nil, agent.RunConfig{}) {
+					if err != nil {
+						log.Printf("Background: Error from ADK runner: %v", err)
+						continue
+					}
+					if ev.LLMResponse.Content != nil {
+						for _, part := range ev.LLMResponse.Content.Parts {
+							responseText += part.Text
+						}
+					}
 				}
+
 
 				trimmedText := strings.TrimSpace(responseText)
 				lowerText := strings.ToLower(trimmedText)
@@ -258,11 +261,19 @@ You have reached your temporal memory threshold! Review the following conversati
 %sNEW CONVERSATION HISTORY:
 %s`, oldSummaryText, textBlock.String())
 
-				sysText := "You are a hyper-analytical background archivist. Your sole purpose is to document explicit skills via tools and summarize data contextually."
-				blankHistory := []ChatMessage{}
-
-				responseText, err := aiProvider.Chat(ctx, prompt, blankHistory, sysText)
-				if err == nil && strings.TrimSpace(responseText) != "" {
+				var responseText string
+				for ev, err := range adkRunner.Run(ctx, "compaction_session", prompt, nil, agent.RunConfig{}) {
+					if err != nil {
+						log.Printf("Compaction: Error from ADK runner: %v", err)
+						continue
+					}
+					if ev.LLMResponse.Content != nil {
+						for _, part := range ev.LLMResponse.Content.Parts {
+							responseText += part.Text
+						}
+					}
+				}
+				if responseText != "" {
 					err = deleteCompactedMessages(ctx, ids)
 					if err != nil {
 						log.Printf("Background: Failed to delete compacted messages: %v", err)
@@ -280,26 +291,7 @@ func main() {
 	var err error
 
 	// Determine LLM provider
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey != "" {
-		log.Println("Initializing Google Gemini API connection...")
-		aiProvider, err = NewGeminiProvider()
-		if err != nil {
-			log.Fatalf("Failed to initialize Gemini provider: %v", err)
-		}
-	} else {
-		targetModel := os.Getenv("OLLAMA_MODEL")
-		if targetModel == "" {
-			targetModel = "gemma:2b" // Safe lightweight default
-			log.Println("OLLAMA_MODEL environment variable missing, defaulting to " + targetModel)
-		}
 
-		log.Printf("Initializing local Ollama connection targeting %s...", targetModel)
-		aiProvider, err = NewOllamaProvider(targetModel)
-		if err != nil {
-			log.Fatalf("Failed to initialize Ollama API connection: %v", err)
-		}
-	}
 
 	// Establish necessary system directories
 	setupDirectories()
@@ -324,6 +316,22 @@ func main() {
 	if subscriptionName == "" {
 		subscriptionName = "gchat-sub"
 		log.Println("PUBSUB_SUBSCRIPTION environment variable missing, defaulting to " + subscriptionName)
+	}
+
+	// Initialize ADK Agent
+	agent, err := createAgent(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create agent: %v", err)
+	}
+
+	sessionService := session.InMemoryService()
+
+	adkRunner, err = runner.New(runner.Config{
+		Agent:          agent,
+		SessionService: sessionService,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create runner: %v", err)
 	}
 
 	startBackgroundTimer()
