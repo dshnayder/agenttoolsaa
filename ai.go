@@ -10,5 +10,5 @@ type ChatMessage struct {
 }
 
 type LLMProvider interface {
-	Chat(ctx context.Context, userPhone string, userMessage string, history []ChatMessage, systemPrompt string) (string, error)
+	Chat(ctx context.Context, userMessage string, history []ChatMessage, systemPrompt string) (string, error)
 }

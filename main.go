@@ -11,11 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"go.mau.fi/whatsmeow"
-	waProto "go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/protobuf/proto"
+
+
 )
 
 var aiProvider LLMProvider
@@ -64,149 +61,100 @@ func getSkillIndex() string {
 	return index.String() + "\n"
 }
 
-func eventHandler(client *whatsmeow.Client) func(interface{}) {
-	return func(evt interface{}) {
-		switch v := evt.(type) {
-		case *events.Message:
-			userMessage := v.Message.GetConversation()
-			if userMessage == "" {
-				userMessage = v.Message.GetExtendedTextMessage().GetText()
-			}
-			if userMessage == "" {
-				return
-			}
+func handleGoogleChatEvent(event GoogleChatEvent) {
+	userMessage := event.Message.Text
+	if userMessage == "" {
+		return
+	}
 
-			userPhoneStr := v.Info.Chat.ToNonAD().String()
-			log.Printf("Received message from %s: %s", userPhoneStr, userMessage)
+	identifier := event.Space.Name
+	log.Printf("Received message from %s: %s", identifier, userMessage)
 
-			if !v.Info.IsGroup {
-				if strings.ToLower(os.Getenv("ALLOW_DM")) != "true" {
-					log.Printf("Dropped DM from %s (ALLOW_DM is restricted)", userPhoneStr)
-					return
-				}
-			}
+	// Save target space for background notifications
+	targetSpaceFile := filepath.Join("memory", "TARGET_SPACE")
+	_ = os.WriteFile(targetSpaceFile, []byte(identifier), 0644)
 
-			allowedChats := os.Getenv("ALLOWED_CHATS")
-			if allowedChats != "" && !strings.Contains(allowedChats, userPhoneStr) {
-				log.Printf("Dropped unauthorized message from %s (Not mapped in ALLOWED_CHATS)", userPhoneStr)
-				return
-			}
+	ctx := context.Background()
 
-			if v.Info.IsGroup {
-				senderJID := v.Info.Sender.ToNonAD().String()
-				userMessage = fmt.Sprintf("[%s via Group]: %s", senderJID, userMessage)
-			}
+	if err := saveChatMessage(ctx, "user", userMessage); err != nil {
+		log.Printf("Failed to insert user message into history: %v", err)
+	}
 
-			ctx := context.Background()
+	history, err := getChatHistory(ctx)
+	if err != nil {
+		log.Printf("Failed to retrieve chat history: %v", err)
+		return
+	}
 
-			// 1. Save user message to database
-			if err := saveChatMessage(ctx, userPhoneStr, "user", userMessage); err != nil {
-				log.Printf("Failed to insert user message into history: %v", err)
-			}
+	sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
+	
+	userFile := filepath.Join("memory", "USER.md")
+	identityData, err := os.ReadFile(userFile)
+	if err == nil && len(identityData) > 0 {
+		sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile.\n\n"
+	}
 
-			// 2. Retrieve history for LLM
-			history, err := getChatHistory(ctx, userPhoneStr)
-			if err != nil {
-				log.Printf("Failed to retrieve chat history: %v", err)
-				return
-			}
+	summaryFile := filepath.Join("memory", "SUMMARY.md")
+	summaryData, err := os.ReadFile(summaryFile)
+	if err == nil && len(summaryData) > 0 {
+		sysText += "Here is the summarized history of your older conversations with the user:\n" + string(summaryData) + "\n\n"
+	}
 
-			// 3. Dynamically set up unified contextual identity
-			sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
-			userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
-			identityData, err := os.ReadFile(userFile)
-			if err == nil && len(identityData) > 0 {
-				sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile.\n\n"
-			}
+	sysText += getSkillIndex()
 
-			summaryFile := filepath.Join("memory", fmt.Sprintf("SUMMARY_%s.md", userPhoneStr))
-			summaryData, err := os.ReadFile(summaryFile)
-			if err == nil && len(summaryData) > 0 {
-				sysText += "Here is the summarized history of your older conversations with the user:\n" + string(summaryData) + "\n\n"
-			}
-
-			sysText += getSkillIndex()
-
-			// Start WhatsApp "typing..." presence
-			_ = client.SendChatPresence(ctx, v.Info.Chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
-
-			// 4. Query Unified AI Provider (which safely handles tool loops)
-			responseText, err := aiProvider.Chat(ctx, userPhoneStr, userMessage, history, sysText)
-
-			// Stop "typing..." presence
-			_ = client.SendChatPresence(ctx, v.Info.Chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
-			if err != nil {
-				log.Printf("Error generating content via AI Provider: %v", err)
-				exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
-				msg := &waProto.Message{
-					Conversation: proto.String(exhaustedMsg),
-				}
-				_, sendErr := client.SendMessage(ctx, v.Info.Chat, msg)
-				if sendErr != nil {
-					log.Printf("Error sending exhaustion message to WhatsApp: %v", sendErr)
-				}
-				return
-			}
-
-			if responseText == "" {
-				responseText = "Sorry, I couldn't generate a response."
-			}
-
-			// 5. Save bot's response to the database
-			if err := saveChatMessage(ctx, userPhoneStr, "model", responseText); err != nil {
-				log.Printf("Failed to insert model message into history: %v", err)
-			}
-
-			log.Printf("Sending reply: %s", responseText)
-
-			msg := &waProto.Message{
-				Conversation: proto.String(responseText),
-			}
-			_, err = client.SendMessage(ctx, v.Info.Chat, msg)
-			if err != nil {
-				log.Printf("Error sending message to WhatsApp: %v", err)
-			}
+	responseText, err := aiProvider.Chat(ctx, userMessage, history, sysText)
+	if err != nil {
+		log.Printf("Error generating content via AI Provider: %v", err)
+		exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
+		err = sendGoogleChatMessage(ctx, event.Space.Name, exhaustedMsg, event.Message.Thread.Name)
+		if err != nil {
+			log.Printf("Error sending exhaustion message to Google Chat: %v", err)
 		}
+		return
+	}
+
+	if responseText == "" {
+		responseText = "Sorry, I couldn't generate a response."
+	}
+
+	if err := saveChatMessage(ctx, "model", responseText); err != nil {
+		log.Printf("Failed to insert model message into history: %v", err)
+	}
+
+	log.Printf("Sending reply: %s", responseText)
+
+	err = sendGoogleChatMessage(ctx, event.Space.Name, responseText, event.Message.Thread.Name)
+	if err != nil {
+		log.Printf("Error sending message to Google Chat: %v", err)
 	}
 }
 
-func startBackgroundTimer(client *whatsmeow.Client) {
+func startBackgroundTimer() {
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
 		for range ticker.C {
-			files, err := filepath.Glob(filepath.Join("memory", "CHECKIN_*.md"))
-			if err != nil {
-				log.Printf("Background Timer Fired: 0 active CHECKIN files found.")
-				continue
-			}
-
-			for _, file := range files {
+			file := filepath.Join("memory", "CHECKIN.md")
+			content, err := os.ReadFile(file)
+			if err == nil && len(strings.TrimSpace(string(content))) > 0 && content[0] == '-' {
 				log.Printf("Background Timer Fired: evaluating %s CHECKIN tracking file...", file)
-				content, err := os.ReadFile(file)
-				if err != nil || len(strings.TrimSpace(string(content))) == 0 || content[0] != '-' {
-					continue
-				}
-
-				base := filepath.Base(file)
-				userPhoneStr := strings.TrimPrefix(base, "CHECKIN_")
-				userPhoneStr = strings.TrimSuffix(userPhoneStr, ".md")
 
 				ctx := context.Background()
 
-				history, err := getChatHistory(ctx, userPhoneStr)
+				history, err := getChatHistory(ctx)
 				if err != nil {
-					log.Printf("No chat history for %s: %v", userPhoneStr, err)
+					log.Printf("No chat history: %v", err)
 					continue
 				}
 
 				sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
-				userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhoneStr))
+				
+				userFile := filepath.Join("memory", "USER.md")
 				identityData, err := os.ReadFile(userFile)
 				if err == nil && len(identityData) > 0 {
 					sysText += "Here is what you currently know about the user's identity:\n" + string(identityData) + "\n\nUse this context when replying, and if they provide new info, use saveUserIdentity to update this profile.\n\n"
 				}
 
-				summaryFile := filepath.Join("memory", fmt.Sprintf("SUMMARY_%s.md", userPhoneStr))
+				summaryFile := filepath.Join("memory", "SUMMARY.md")
 				summaryData, err := os.ReadFile(summaryFile)
 				if err == nil && len(summaryData) > 0 {
 					sysText += "Here is the summarized history of your older conversations with the user:\n" + string(summaryData) + "\n\n"
@@ -243,62 +191,63 @@ The logic for processing background tasks is as follows:
 
 CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 
-				resultText, err := aiProvider.Chat(ctx, userPhoneStr, prompt, history, sysText)
+				targetSpace := ""
+				targetSpaceFile := filepath.Join("memory", "TARGET_SPACE")
+				data, err := os.ReadFile(targetSpaceFile)
+				if err == nil && len(data) > 0 {
+					targetSpace = string(data)
+				} else {
+					targetSpace = os.Getenv("TARGET_SPACE")
+				}
+
+				if targetSpace == "" {
+					log.Printf("Background: Target space not set (via message or TARGET_SPACE env var), cannot send notification.")
+					continue
+				}
+
+				responseText, err := aiProvider.Chat(ctx, prompt, history, sysText)
 				if err != nil {
 					log.Printf("Background: Error communicating with AI provider: %v", err)
 					continue
 				}
 
-				trimmedText := strings.TrimSpace(resultText)
+				trimmedText := strings.TrimSpace(responseText)
 				lowerText := strings.ToLower(trimmedText)
 				if trimmedText != "" && trimmedText != "IGNORE" && !strings.Contains(lowerText, "no response generated") {
-					jid, err := types.ParseJID(userPhoneStr)
+					err = sendGoogleChatMessage(ctx, targetSpace, trimmedText, "")
 					if err == nil {
-						msg := &waProto.Message{
-							Conversation: proto.String(trimmedText),
-						}
-						_, err = client.SendMessage(ctx, jid, msg)
-						if err == nil {
-							// Provide conversational anchors so the Model timeline strictly alternates and doesn't crash GenAI limits
-							_ = saveChatMessage(ctx, userPhoneStr, "user", "[SYSTEM WAKEUP ACTION] A background checkin evaluating tasks was executed natively out-of-band.")
-							_ = saveChatMessage(ctx, userPhoneStr, "model", trimmedText)
-						} else {
-							log.Printf("Background: Error sending WhatsApp message: %v", err)
-						}
+						_ = saveChatMessage(ctx, "user", "[SYSTEM WAKEUP ACTION] A background checkin evaluating tasks was executed natively out-of-band.")
+						_ = saveChatMessage(ctx, "model", trimmedText)
 					} else {
-						log.Printf("Background: Invalid JID %s: %v", userPhoneStr, err)
+						log.Printf("Background: Error sending Google Chat message: %v", err)
 					}
 				}
 			} // End checkin loop
 
 			// START COMPACTION LOOP
 			ctx := context.Background()
-			activePhones, err := getActivePhones(ctx)
-			if err == nil {
-				for _, userPhoneStr := range activePhones {
-					var total int
-					_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history WHERE phone_number = ?", userPhoneStr).Scan(&total)
+			var total int
+			_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history").Scan(&total)
 
-					if total >= 20 { // User requested threshold 20
-						// Keep the most recent 10 natively
-						ids, msgs, err := getMessagesToCompact(ctx, userPhoneStr, 10)
-						if err != nil || len(ids) == 0 {
-							continue
-						}
+			if total >= 20 {
+				ids, msgs, err := getMessagesToCompact(ctx, 10)
+				if err != nil || len(ids) == 0 {
+					continue
+				}
 
-						var textBlock strings.Builder
-						for _, m := range msgs {
-							textBlock.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(m.Role), m.Text))
-						}
+				var textBlock strings.Builder
+				for _, m := range msgs {
+					textBlock.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(m.Role), m.Text))
+				}
 
-						summaryFile := filepath.Join("memory", fmt.Sprintf("SUMMARY_%s.md", userPhoneStr))
-						existingSummary, err := os.ReadFile(summaryFile)
-						var oldSummaryText string
-						if err == nil && len(existingSummary) > 0 {
-							oldSummaryText = fmt.Sprintf("EXISTING PREVIOUS SUMMARY:\n%s\n\n", string(existingSummary))
-						}
+				summaryFile := filepath.Join("memory", "SUMMARY.md")
+				existingSummary, err := os.ReadFile(summaryFile)
+				var oldSummaryText string
+				if err == nil && len(existingSummary) > 0 {
+					oldSummaryText = fmt.Sprintf("EXISTING PREVIOUS SUMMARY:\n%s\n\n", string(existingSummary))
+				}
 
-						prompt := fmt.Sprintf(`[BACKGROUND COMPACTION ROUTINE]
+				prompt := fmt.Sprintf(`[BACKGROUND COMPACTION ROUTINE]
 You have reached your temporal memory threshold! Review the following conversation history.
 1. Use the 'writeSkill' tool to permanently extract any new rules, instructions, or coding logic that the user explicitly taught you during this snippet.
 2. Formulate a dense, narrative paragraph summarizing everything discussed here so we don't forget the context of the conversation. Output ONLY the raw textual summary content. Do not include introductory text like 'Here is the summary'. Merge the EXISTING PREVIOUS SUMMARY (if any) with the NEW CONVERSATION HISTORY into a single cohesive narrative document.
@@ -306,19 +255,17 @@ You have reached your temporal memory threshold! Review the following conversati
 %sNEW CONVERSATION HISTORY:
 %s`, oldSummaryText, textBlock.String())
 
-						sysText := "You are a hyper-analytical background archivist. Your sole purpose is to document explicit skills via tools and summarize data contextually."
-						blankHistory := []ChatMessage{}
+				sysText := "You are a hyper-analytical background archivist. Your sole purpose is to document explicit skills via tools and summarize data contextually."
+				blankHistory := []ChatMessage{}
 
-						summaryRes, err := aiProvider.Chat(ctx, userPhoneStr, prompt, blankHistory, sysText)
-						if err == nil && strings.TrimSpace(summaryRes) != "" {
-							err = deleteCompactedMessages(ctx, ids)
-							if err != nil {
-								log.Printf("Background: Failed to delete compacted messages: %v", err)
-							} else {
-								_ = os.WriteFile(summaryFile, []byte(strings.TrimSpace(summaryRes)), 0644)
-								log.Printf("Background: Successfully compacted %d messages for %s into markdown summary", len(ids), userPhoneStr)
-							}
-						}
+				responseText, err := aiProvider.Chat(ctx, prompt, blankHistory, sysText)
+				if err == nil && strings.TrimSpace(responseText) != "" {
+					err = deleteCompactedMessages(ctx, ids)
+					if err != nil {
+						log.Printf("Background: Failed to delete compacted messages: %v", err)
+					} else {
+						_ = os.WriteFile(summaryFile, []byte(strings.TrimSpace(responseText)), 0644)
+						log.Printf("Background: Successfully compacted %d messages into markdown summary", len(ids))
 					}
 				}
 			}
@@ -360,20 +307,29 @@ func main() {
 	}
 	defer db.Close()
 
-	// Connect to WhatsApp
-	ctx := context.Background()
-	client, err := setupWhatsApp(ctx, filepath.Join("memory", "store.db"), eventHandler)
-	if err != nil {
-		log.Fatalf("WhatsApp setup failed: %v", err)
-	}
-
-	// Start Background Monitoring
-	startBackgroundTimer(client)
-	log.Println("Background timer successfully armed.")
-
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	<-c
 
-	client.Disconnect()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		<-c
+		log.Println("Shutting down...")
+		cancel()
+	}()
+
+	subscriptionName := os.Getenv("PUBSUB_SUBSCRIPTION")
+	if subscriptionName == "" {
+		subscriptionName = "projects/dmitryshnayder-claw-25252/subscriptions/gchat-sub"
+		log.Println("PUBSUB_SUBSCRIPTION environment variable missing, defaulting to " + subscriptionName)
+	}
+
+	startBackgroundTimer()
+	log.Println("Background timer successfully armed.")
+
+	log.Printf("Starting Pub/Sub monitor on %s", subscriptionName)
+	err = startPubSubMonitor(ctx, subscriptionName, handleGoogleChatEvent)
+	if err != nil {
+		log.Fatalf("Pub/Sub monitor failed: %v", err)
+	}
 }

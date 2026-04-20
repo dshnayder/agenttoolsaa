@@ -19,23 +19,22 @@ func initDB(filepath string) error {
 	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS chat_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		phone_number TEXT,
 		role TEXT,
 		message TEXT,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-	CREATE INDEX IF NOT EXISTS idx_phone ON chat_history(phone_number, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_timestamp ON chat_history(timestamp DESC);
 	`)
 	return err
 }
 
-func saveChatMessage(ctx context.Context, phoneStr, role, message string) error {
-	_, err := db.ExecContext(ctx, "INSERT INTO chat_history (phone_number, role, message) VALUES (?, ?, ?)", phoneStr, role, message)
+func saveChatMessage(ctx context.Context, role, message string) error {
+	_, err := db.ExecContext(ctx, "INSERT INTO chat_history (role, message) VALUES (?, ?)", role, message)
 	return err
 }
 
-func getChatHistory(ctx context.Context, phoneStr string) ([]ChatMessage, error) {
-	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history WHERE phone_number = ? ORDER BY timestamp DESC", phoneStr)
+func getChatHistory(ctx context.Context) ([]ChatMessage, error) {
+	rows, err := db.QueryContext(ctx, "SELECT role, message FROM chat_history ORDER BY timestamp DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -70,33 +69,17 @@ func getChatHistory(ctx context.Context, phoneStr string) ([]ChatMessage, error)
 	return history, nil
 }
 
-func getActivePhones(ctx context.Context) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT DISTINCT phone_number FROM chat_history")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
-	var phones []string
-	for rows.Next() {
-		var phone string
-		if err := rows.Scan(&phone); err == nil {
-			phones = append(phones, phone)
-		}
-	}
-	return phones, nil
-}
-
-func getMessagesToCompact(ctx context.Context, phoneStr string, keepCount int) (ids []int, msgs []ChatMessage, err error) {
+func getMessagesToCompact(ctx context.Context, keepCount int) (ids []int, msgs []ChatMessage, err error) {
 	var total int
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history WHERE phone_number = ?", phoneStr).Scan(&total)
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chat_history").Scan(&total)
 	if err != nil || total <= keepCount {
 		return nil, nil, err
 	}
 
 	deleteCount := total - keepCount
 
-	rows, err := db.QueryContext(ctx, "SELECT id, role, message, timestamp FROM chat_history WHERE phone_number = ? ORDER BY timestamp ASC, id ASC LIMIT ?", phoneStr, deleteCount)
+	rows, err := db.QueryContext(ctx, "SELECT id, role, message, timestamp FROM chat_history ORDER BY timestamp ASC, id ASC LIMIT ?", deleteCount)
 	if err != nil {
 		return nil, nil, err
 	}

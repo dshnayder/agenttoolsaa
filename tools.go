@@ -115,7 +115,7 @@ Example:
 }
 
 // ExecuteTool routes an API-agnostic tool request cleanly.
-func ExecuteTool(name string, args map[string]any, userPhone string) map[string]any {
+func ExecuteTool(name string, args map[string]any) map[string]any {
 	var result map[string]any
 
 	log.Printf("Executing tool: %s, Args: %+v", name, args)
@@ -124,7 +124,7 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 	case "saveUserIdentity":
 		if contentObj, ok := args["markdown_content"]; ok {
 			if mdStr, isStr := contentObj.(string); isStr {
-				userFile := filepath.Join("memory", fmt.Sprintf("USER_%s.md", userPhone))
+				userFile := filepath.Join("memory", "USER.md")
 				_ = os.WriteFile(userFile, []byte(mdStr), 0644)
 				result = map[string]any{"status": "success", "file_saved": userFile}
 			} else {
@@ -137,7 +137,7 @@ func ExecuteTool(name string, args map[string]any, userPhone string) map[string]
 	case "updateCheckin":
 		if contentObj, ok := args["markdown_content"]; ok {
 			if mdStr, isStr := contentObj.(string); isStr {
-				checkinFile := filepath.Join("memory", fmt.Sprintf("CHECKIN_%s.md", userPhone))
+				checkinFile := filepath.Join("memory", "CHECKIN.md")
 				_ = os.WriteFile(checkinFile, []byte(mdStr), 0644)
 				result = map[string]any{"status": "success", "file_saved": checkinFile}
 			} else {

@@ -49,7 +49,7 @@ func (o *OllamaProvider) getOllamaTools() []api.Tool {
 	return tools
 }
 
-func (o *OllamaProvider) Chat(ctx context.Context, userPhone string, userMessage string, history []ChatMessage, systemPrompt string) (string, error) {
+func (o *OllamaProvider) Chat(ctx context.Context, userMessage string, history []ChatMessage, systemPrompt string) (string, error) {
 	var messages []api.Message
 
 	messages = append(messages, api.Message{
@@ -105,7 +105,7 @@ func (o *OllamaProvider) Chat(ctx context.Context, userPhone string, userMessage
 			name := tc.Function.Name
 			argsMap := tc.Function.Arguments.ToMap()
 
-			resultMap := ExecuteTool(name, argsMap, userPhone)
+			resultMap := ExecuteTool(name, argsMap)
 
 			resultBytes, _ := json.Marshal(resultMap)
 

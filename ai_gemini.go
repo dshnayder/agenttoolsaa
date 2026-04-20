@@ -46,7 +46,7 @@ func (g *GeminiProvider) generateToolConfig() *genai.GenerateContentConfig {
 	}
 }
 
-func (g *GeminiProvider) Chat(ctx context.Context, userPhone string, userMessage string, history []ChatMessage, systemPrompt string) (string, error) {
+func (g *GeminiProvider) Chat(ctx context.Context, userMessage string, history []ChatMessage, systemPrompt string) (string, error) {
 	config := g.generateToolConfig()
 	config.SystemInstruction = &genai.Content{
 		Parts: []*genai.Part{{Text: systemPrompt}},
@@ -82,7 +82,7 @@ func (g *GeminiProvider) Chat(ctx context.Context, userPhone string, userMessage
 			for _, part := range resp.Candidates[0].Content.Parts {
 				if part.FunctionCall != nil {
 					hasToolCall = true
-					result := ExecuteTool(part.FunctionCall.Name, part.FunctionCall.Args, userPhone)
+					result := ExecuteTool(part.FunctionCall.Name, part.FunctionCall.Args)
 
 					fr := genai.Part{
 						FunctionResponse: &genai.FunctionResponse{
