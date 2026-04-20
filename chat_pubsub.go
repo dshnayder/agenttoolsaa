@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/chat/v1"
@@ -40,7 +41,9 @@ func startPubSubMonitor(ctx context.Context, subscriptionName string, handler fu
 	}
 	defer client.Close()
 
-	sub := client.Subscription(subscriptionName)
+	parts := strings.Split(subscriptionName, "/")
+	subID := parts[len(parts)-1]
+	sub := client.Subscription(subID)
 
 	log.Printf("Listening on Pub/Sub subscription: %s", subscriptionName)
 

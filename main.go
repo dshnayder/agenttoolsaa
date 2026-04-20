@@ -322,7 +322,7 @@ func main() {
 
 	subscriptionName := os.Getenv("PUBSUB_SUBSCRIPTION")
 	if subscriptionName == "" {
-		subscriptionName = "projects/dmitryshnayder-claw-25252/subscriptions/gchat-sub"
+		subscriptionName = "gchat-sub"
 		log.Println("PUBSUB_SUBSCRIPTION environment variable missing, defaulting to " + subscriptionName)
 	}
 
