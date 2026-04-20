@@ -17,7 +17,7 @@ func createAgent(ctx context.Context) (agent.Agent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is required")
 	}
 
-	model, err := gemini.NewModel(ctx, "gemini-2.5-flash", &genai.ClientConfig{APIKey: apiKey})
+	model, err := gemini.NewModel(ctx, "gemini-3.1-flash-lite-preview", &genai.ClientConfig{APIKey: apiKey})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create model: %w", err)
 	}

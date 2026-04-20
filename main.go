@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
+	"google.golang.org/genai"
 )
 
 var adkRunner *runner.Runner
@@ -99,7 +100,10 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 
 	prompt := fmt.Sprintf("%s\n\nUser Message: %s", sysText, userMessage)
 	var responseText string
-	for ev, err := range adkRunner.Run(ctx, "single_session", prompt, nil, agent.RunConfig{}) {
+	content := &genai.Content{
+		Parts: []*genai.Part{{Text: prompt}},
+	}
+	for ev, err := range adkRunner.Run(ctx, "single_user", "single_session", content, agent.RunConfig{}) {
 		if err != nil {
 			log.Printf("Error from ADK runner: %v", err)
 			continue
@@ -201,7 +205,10 @@ CHECKIN LIST:\n%s`, time.Now().Format(time.RFC3339), string(content))
 				}
 
 				var responseText string
-				for ev, err := range adkRunner.Run(ctx, "background_session", prompt, nil, agent.RunConfig{}) {
+				content := &genai.Content{
+					Parts: []*genai.Part{{Text: prompt}},
+				}
+				for ev, err := range adkRunner.Run(ctx, "background_user", "background_session", content, agent.RunConfig{}) {
 					if err != nil {
 						log.Printf("Background: Error from ADK runner: %v", err)
 						continue
@@ -329,6 +336,7 @@ func main() {
 	adkRunner, err = runner.New(runner.Config{
 		Agent:          agent,
 		SessionService: sessionService,
+		AppName:        "chat-bot",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)
