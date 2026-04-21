@@ -124,7 +124,7 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "system_admin_agent",
 		Model:       model,
-		Instruction: "You are a fully autonomous, self-scheduling conversational AI agent capable of monitoring, managing, and fixing systems directly from Google Chat. You have raw unconstrained shell access and local filesystem tools.\n\n" + sysText,
+		Instruction: "You are a fully autonomous, self-scheduling conversational AI agent capable of monitoring, managing, and fixing systems directly from Google Chat. You have raw unconstrained shell access and local filesystem tools.",
 		Tools:       tools,
 	})
 	if err != nil {
@@ -144,7 +144,7 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 	}
 
 	msg := &genai.Content{
-		Parts: []*genai.Part{{Text: userMessage}},
+		Parts: []*genai.Part{{Text: sysText + "\n\n" + userMessage}},
 	}
 
 	var responseBuilder strings.Builder
