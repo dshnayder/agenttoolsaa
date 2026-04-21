@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -110,6 +111,14 @@ Example:
 				"command": {Type: "string", Description: "The shell command to execute."},
 			},
 			Required: []string{"command"},
+		},
+		{
+			Name:        "runErrorResolutionAgent",
+			Description: "Invokes the Error Resolution Agent to diagnose and fix cluster errors. Pass the event details or error description in the prompt.",
+			Properties: map[string]ToolProperty{
+				"prompt": {Type: "string", Description: "The event details or error description to analyze."},
+			},
+			Required: []string{"prompt"},
 		},
 	}
 }
@@ -257,6 +266,28 @@ func ExecuteTool(name string, args map[string]any) map[string]any {
 			}
 		} else {
 			result = map[string]any{"error": "missing command"}
+		}
+
+	case "runErrorResolutionAgent":
+		if promptObj, ok := args["prompt"]; ok {
+			if promptStr, isStr := promptObj.(string); isStr {
+				ctx := context.Background()
+				agent, err := NewErrorResolutionAgent(ctx)
+				if err != nil {
+					result = map[string]any{"error": "failed to create agent: " + err.Error()}
+				} else {
+					response, err := agent.Run(ctx, promptStr)
+					if err != nil {
+						result = map[string]any{"error": err.Error()}
+					} else {
+						result = map[string]any{"response": response}
+					}
+				}
+			} else {
+				result = map[string]any{"error": "invalid prompt type"}
+			}
+		} else {
+			result = map[string]any{"error": "missing prompt"}
 		}
 
 	default:

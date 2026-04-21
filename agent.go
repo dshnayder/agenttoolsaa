@@ -8,8 +8,13 @@ import (
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model/gemini"
+	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 )
+
+func GetAllTools() ([]tool.Tool, error) {
+	return nil, nil
+}
 
 func createAgent(ctx context.Context) (agent.Agent, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
