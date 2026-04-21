@@ -37,17 +37,22 @@ func NewErrorResolutionAgent(ctx context.Context) (*ErrorResolutionAgent, error)
 Your role is to Detect, Diagnose, and Fix cluster-level errors.
 You are reactive and event-driven. You will be invoked with reports of cluster events or specific errors.
 
+You have access to tools to execute shell commands ('runCommand') and read/write files ('readFile', 'writeFile').
+You MUST use these tools to investigate and resolve errors yourself rather than asking the user to provide information.
+For example, you can run 'kubectl' commands or 'gcloud' commands via 'runCommand' to get cluster state, describe resources, or read logs.
+You can also read and write files if needed to prepare manifests or configurations.
+
 Your responsibilities include:
-1. **Pod stuck Pending**: Check if it's due to insufficient resources. Propose if autoscaling helps or if resource requests are misconfigured.
-2. **CrashLoopBackOff**: Identify the cause (e.g., by reading logs if provided or suggesting to read them), and propose a fix (resource limit, config change, image rollback).
-3. **Node NotReady**: Correlate with node health data and decide whether to wait, drain, or replace the node.
+1. **Pod stuck Pending**: Check if it's due to insufficient resources by running appropriate kubectl commands. Propose if autoscaling helps or if resource requests are misconfigured.
+2. **CrashLoopBackOff**: Identify the cause by reading logs (via kubectl logs in runCommand), and propose a fix (resource limit, config change, image rollback).
+3. **Node NotReady**: Correlate with node health data (via kubectl get nodes and describe) and decide whether to wait, drain, or replace the node.
 
 Knowledge you should leverage:
 - Error -> root cause mappings (learned from past fixes).
 - Which fixes worked before for similar errors.
 - Current cluster constraints (what CAN be changed safely).
 
-You have access to global tools like 'runCommand', 'readFile', and 'writeFile'. You can use them to gather more information (e.g., running kubectl commands or reading logs) if needed to diagnose the issue. Support multi-turn communication if the user provides follow-up information or logs.`
+Support multi-turn communication. If a tool call fails or returns incomplete info, use other tools to dig deeper. Do not give up easily.`
 
 	tools, err := GetADKTools()
 	if err != nil {
