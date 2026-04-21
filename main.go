@@ -10,9 +10,17 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/model/gemini"
+	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
+	"google.golang.org/genai"
 )
 
 var aiProvider LLMProvider
+var chatSessionService session.Service
 
 func getSkillIndex() string {
 	skillsDir := filepath.Join("memory", "skills")
@@ -77,11 +85,7 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 		log.Printf("Failed to insert user message into history: %v", err)
 	}
 
-	history, err := getChatHistory(ctx)
-	if err != nil {
-		log.Printf("Failed to retrieve chat history: %v", err)
-		return
-	}
+
 
 	sysText := fmt.Sprintf("Current System Time: %s\n\n", time.Now().Format(time.RFC3339))
 	
@@ -99,16 +103,68 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 
 	sysText += getSkillIndex()
 
-	responseText, err := aiProvider.Chat(ctx, userMessage, history, sysText)
-	if err != nil {
-		log.Printf("Error generating content via AI Provider: %v", err)
-		exhaustedMsg := "AI brain is experiencing difficulties or exhausted, please try a bit later"
-		err = sendGoogleChatMessage(ctx, event.Space.Name, exhaustedMsg, event.Message.Thread.Name)
-		if err != nil {
-			log.Printf("Error sending exhaustion message to Google Chat: %v", err)
-		}
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Printf("GEMINI_API_KEY environment variable is required")
 		return
 	}
+
+	model, err := gemini.NewModel(ctx, "gemini-3.1-flash-lite-preview", &genai.ClientConfig{APIKey: apiKey})
+	if err != nil {
+		log.Printf("Failed to create model: %v", err)
+		return
+	}
+
+	tools, err := GetADKTools()
+	if err != nil {
+		log.Printf("Failed to get tools: %v", err)
+		return
+	}
+
+	adkAgent, err := llmagent.New(llmagent.Config{
+		Name:        "system_admin_agent",
+		Model:       model,
+		Instruction: "You are a fully autonomous, self-scheduling conversational AI agent capable of monitoring, managing, and fixing systems directly from Google Chat. You have raw unconstrained shell access and local filesystem tools.\n\n" + sysText,
+		Tools:       tools,
+	})
+	if err != nil {
+		log.Printf("Failed to create agent: %v", err)
+		return
+	}
+
+	r, err := runner.New(runner.Config{
+		AppName:           "GoogleChatApp",
+		Agent:             adkAgent,
+		SessionService:    chatSessionService,
+		AutoCreateSession: true,
+	})
+	if err != nil {
+		log.Printf("Failed to create runner: %v", err)
+		return
+	}
+
+	msg := &genai.Content{
+		Parts: []*genai.Part{{Text: userMessage}},
+	}
+
+	var responseBuilder strings.Builder
+	for event, err := range r.Run(ctx, "user", event.Space.Name, msg, agent.RunConfig{}) {
+		if err != nil {
+			log.Printf("Error during agent run: %v", err)
+			return
+		}
+		if event != nil && event.Author == "system_admin_agent" {
+			if event.LLMResponse.Content != nil {
+				for _, part := range event.LLMResponse.Content.Parts {
+					if part.Text != "" {
+						responseBuilder.WriteString(part.Text)
+					}
+				}
+			}
+		}
+	}
+
+	responseText := responseBuilder.String()
 
 	if responseText == "" {
 		responseText = "Sorry, I couldn't generate a response."
@@ -301,6 +357,9 @@ func main() {
 	// Establish necessary system directories
 	setupDirectories()
 
+	// Initialize ADK session service
+	chatSessionService = session.InMemoryService()
+
 	// Initialize JSON history storage
 	if err := initDB(filepath.Join("memory", "HISTORY.json")); err != nil {
 		log.Fatalf("History initialization failed: %v", err)
@@ -323,8 +382,8 @@ func main() {
 		log.Println("PUBSUB_SUBSCRIPTION environment variable missing, defaulting to " + subscriptionName)
 	}
 
-	startBackgroundTimer()
-	log.Println("Background timer successfully armed.")
+	// startBackgroundTimer()
+	log.Println("Background timer disabled by user request.")
 
 	log.Printf("Starting Pub/Sub monitor on %s", subscriptionName)
 	err = startPubSubMonitor(ctx, subscriptionName, handleGoogleChatEvent)

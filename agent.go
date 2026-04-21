@@ -13,7 +13,7 @@ import (
 )
 
 func GetAllTools() ([]tool.Tool, error) {
-	return nil, nil
+	return GetADKTools()
 }
 
 func createAgent(ctx context.Context) (agent.Agent, error) {
