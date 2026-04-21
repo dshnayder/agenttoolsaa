@@ -114,7 +114,7 @@ Example:
 		},
 		{
 			Name:        "runErrorResolutionAgent",
-			Description: "Invokes the Error Resolution Agent to diagnose and fix cluster errors. Pass the event details or error description in the prompt.",
+			Description: "Invokes the Error Resolution Agent to diagnose and fix cluster errors. Pass the event details or error description in the prompt. Examples of errors to handle: Pod stuck Pending (insufficient resources), CrashLoopBackOff (app crashing), Node NotReady. Example of tool call arguments: `{\"prompt\": \"Pod my-app-xyz stuck in Pending state.\"}`",
 			Properties: map[string]ToolProperty{
 				"prompt": {Type: "string", Description: "The event details or error description to analyze."},
 			},
