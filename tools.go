@@ -272,16 +272,11 @@ func ExecuteTool(name string, args map[string]any) map[string]any {
 		if promptObj, ok := args["prompt"]; ok {
 			if promptStr, isStr := promptObj.(string); isStr {
 				ctx := context.Background()
-				agent, err := NewErrorResolutionAgent(ctx)
+				response, err := RunErrorResolutionAgent(ctx, promptStr)
 				if err != nil {
-					result = map[string]any{"error": "failed to create agent: " + err.Error()}
+					result = map[string]any{"error": err.Error()}
 				} else {
-					response, err := agent.Run(ctx, promptStr)
-					if err != nil {
-						result = map[string]any{"error": err.Error()}
-					} else {
-						result = map[string]any{"response": response}
-					}
+					result = map[string]any{"response": response}
 				}
 			} else {
 				result = map[string]any{"error": "invalid prompt type"}

@@ -10,9 +10,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-
-
 )
 
 var aiProvider LLMProvider

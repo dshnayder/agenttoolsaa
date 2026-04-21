@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"google.golang.org/genai"
 )
@@ -64,7 +65,11 @@ func (g *GeminiProvider) Chat(ctx context.Context, userMessage string, history [
 		})
 	}
 
-	chatSession, err := g.client.Chats.Create(ctx, "gemini-3.1-flash-lite-preview", config, genaiHistory)
+	modelName := os.Getenv("GEMINI_MODEL")
+	if modelName == "" {
+		modelName = "gemini-3.1-flash-lite-preview"
+	}
+	chatSession, err := g.client.Chats.Create(ctx, modelName, config, genaiHistory)
 	if err != nil {
 		return "", err
 	}

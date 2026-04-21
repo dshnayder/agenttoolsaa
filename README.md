@@ -51,7 +51,7 @@ TARGET_SPACE="spaces/XXXXXXXXX" go run .
 *Note: If `TARGET_SPACE` is not set and the bot hasn't received any messages yet, background notifications will be skipped.*
 
 ## Directory Structure Overview
-- `memory/store.db` - Auto-generated localized SQLite tracker mapping temporal conversation timelines.
+- `memory/HISTORY.json` - Auto-generated localized JSON tracker mapping temporal conversation timelines.
 - `memory/skills/` - Isolated dynamically rendered indexing directories structurally teaching your Bot new workflow methods.
 - `memory/SUMMARY_*.md` - Compressed long-term narrative logs.
 - `workspace/` - Security constraint lock box where explicit filesystem tools write out dynamically evaluated file configurations.

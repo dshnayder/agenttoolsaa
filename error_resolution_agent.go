@@ -14,23 +14,20 @@ import (
 	"google.golang.org/genai"
 )
 
-// ErrorResolutionAgent wraps the ADK agent for error resolution.
-type ErrorResolutionAgent struct {
-	adkAgent agent.Agent
-	runner   *runner.Runner
-}
-
-// NewErrorResolutionAgent creates a new instance of the Error Resolution Agent.
-func NewErrorResolutionAgent(ctx context.Context) (*ErrorResolutionAgent, error) {
+func RunErrorResolutionAgent(ctx context.Context, message string) (string, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is required")
+		return "", fmt.Errorf("GEMINI_API_KEY environment variable is required")
 	}
 
 	// Initialize the Gemini model via ADK
-	model, err := gemini.NewModel(ctx, "gemini-3.1-flash-lite-preview", &genai.ClientConfig{APIKey: apiKey})
+	modelName := os.Getenv("GEMINI_MODEL")
+	if modelName == "" {
+		modelName = "gemini-3.1-flash-lite-preview"
+	}
+	model, err := gemini.NewModel(ctx, modelName, &genai.ClientConfig{APIKey: apiKey})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gemini model: %w", err)
+		return "", fmt.Errorf("failed to create gemini model: %w", err)
 	}
 
 	instruction := `You are an expert Kubernetes and GKE Error Resolution Agent.
@@ -56,7 +53,7 @@ Support multi-turn communication. If a tool call fails or returns incomplete inf
 
 	tools, err := GetADKTools()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ADK tools: %w", err)
+		return "", fmt.Errorf("failed to get ADK tools: %w", err)
 	}
 
 	config := llmagent.Config{
@@ -69,7 +66,7 @@ Support multi-turn communication. If a tool call fails or returns incomplete inf
 
 	adkAgent, err := llmagent.New(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ADK agent: %w", err)
+		return "", fmt.Errorf("failed to create ADK agent: %w", err)
 	}
 
 	sessionService := session.InMemoryService()
@@ -82,17 +79,9 @@ Support multi-turn communication. If a tool call fails or returns incomplete inf
 		AutoCreateSession: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create runner: %w", err)
+		return "", fmt.Errorf("failed to create runner: %w", err)
 	}
 
-	return &ErrorResolutionAgent{
-		adkAgent: adkAgent,
-		runner:   r,
-	}, nil
-}
-
-// Run invokes the agent with a user message and returns the response.
-func (a *ErrorResolutionAgent) Run(ctx context.Context, message string) (string, error) {
 	msg := &genai.Content{
 		Parts: []*genai.Part{{Text: message}},
 	}
@@ -100,7 +89,7 @@ func (a *ErrorResolutionAgent) Run(ctx context.Context, message string) (string,
 	var responseBuilder strings.Builder
 	
 	// Run the agent via runner
-	for event, err := range a.runner.Run(ctx, "user-test", "session-test", msg, agent.RunConfig{}) {
+	for event, err := range r.Run(ctx, "user-test", "session-test", msg, agent.RunConfig{}) {
 		if err != nil {
 			return "", fmt.Errorf("error during agent run: %w", err)
 		}
