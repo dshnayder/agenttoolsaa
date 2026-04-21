@@ -99,9 +99,15 @@ func (a *ErrorResolutionAgent) Run(ctx context.Context, message string) (string,
 		if err != nil {
 			return "", fmt.Errorf("error during agent run: %w", err)
 		}
-		if event.LLMResponse.Content != nil {
-			for _, part := range event.LLMResponse.Content.Parts {
-				responseBuilder.WriteString(part.Text)
+		
+		// Accumulate text responses from our agent
+		if event != nil && event.Author == "ErrorResolutionAgent" {
+			if event.LLMResponse.Content != nil {
+				for _, part := range event.LLMResponse.Content.Parts {
+					if part.Text != "" {
+						responseBuilder.WriteString(part.Text)
+					}
+				}
 			}
 		}
 	}

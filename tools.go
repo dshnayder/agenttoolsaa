@@ -294,5 +294,7 @@ func ExecuteTool(name string, args map[string]any) map[string]any {
 		result = map[string]any{"error": "unknown function executed"}
 	}
 
+	log.Printf("Tool %s execution result: %+v", name, result)
+
 	return result
 }
