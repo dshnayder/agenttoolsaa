@@ -61,18 +61,18 @@ type WriteFileArgs struct {
 
 func writeFileFunc(ctx tool.Context, args WriteFileArgs) (string, error) {
 	log.Printf("ADK Tool writeFile called with args: %+v", args)
-	// path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
-	// if !strings.HasPrefix(path, workspaceDir) {
-	// 	return "", fmt.Errorf("access denied: pathological path escaping the workspace")
-	// }
-	// err := os.MkdirAll(filepath.Dir(path), 0755)
-	// if err != nil {
-	// 	return "", err
-	// }
-	// err = os.WriteFile(path, []byte(args.Content), 0644)
-	// if err != nil {
-	// 	return "", err
-	// }
+	path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
+	if !strings.HasPrefix(path, workspaceDir) {
+		return "", fmt.Errorf("access denied: pathological path escaping the workspace")
+	}
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		return "", err
+	}
+	err = os.WriteFile(path, []byte(args.Content), 0644)
+	if err != nil {
+		return "", err
+	}
 	return "file written successfully", nil
 }
 

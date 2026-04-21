@@ -20,7 +20,6 @@ import (
 )
 
 var aiProvider LLMProvider
-var chatSessionService session.Service
 
 func getSkillIndex() string {
 	skillsDir := filepath.Join("memory", "skills")
@@ -132,10 +131,13 @@ func handleGoogleChatEvent(event GoogleChatEvent) {
 		return
 	}
 
+	// Initialize ADK session service
+	sessionService := session.InMemoryService()
+
 	r, err := runner.New(runner.Config{
 		AppName:           "GoogleChatApp",
 		Agent:             adkAgent,
-		SessionService:    chatSessionService,
+		SessionService:    sessionService,
 		AutoCreateSession: true,
 	})
 	if err != nil {
@@ -356,9 +358,6 @@ func main() {
 
 	// Establish necessary system directories
 	setupDirectories()
-
-	// Initialize ADK session service
-	chatSessionService = session.InMemoryService()
 
 	// Initialize JSON history storage
 	if err := initDB(filepath.Join("memory", "HISTORY.json")); err != nil {
