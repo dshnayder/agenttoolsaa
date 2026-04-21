@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ type RunCommandArgs struct {
 }
 
 func runCommandFunc(ctx tool.Context, args RunCommandArgs) (string, error) {
+	log.Printf("ADK Tool runCommand called with args: %+v", args)
 	cmd := exec.Command("bash", "-c", args.Command)
 	cmd.Dir = workspaceDir
 
@@ -39,6 +41,7 @@ type ReadFileArgs struct {
 }
 
 func readFileFunc(ctx tool.Context, args ReadFileArgs) (string, error) {
+	log.Printf("ADK Tool readFile called with args: %+v", args)
 	path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
 	if !strings.HasPrefix(path, workspaceDir) {
 		return "", fmt.Errorf("access denied: pathological path escaping the workspace")
@@ -57,6 +60,7 @@ type WriteFileArgs struct {
 }
 
 func writeFileFunc(ctx tool.Context, args WriteFileArgs) (string, error) {
+	log.Printf("ADK Tool writeFile called with args: %+v", args)
 	path := filepath.Clean(filepath.Join(workspaceDir, args.Filename))
 	if !strings.HasPrefix(path, workspaceDir) {
 		return "", fmt.Errorf("access denied: pathological path escaping the workspace")
